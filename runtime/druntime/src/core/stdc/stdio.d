@@ -1907,8 +1907,10 @@ else version (WASI)
     }
 
     ///
+    pragma(printf)
     int  snprintf(scope char* s, size_t n, scope const char* format, ...);
     ///
+    pragma(printf)
     int  vsnprintf(scope char* s, size_t n, scope const char* format, va_list arg);
 }
 else

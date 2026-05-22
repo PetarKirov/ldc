@@ -26,6 +26,9 @@ else version (Posix)
     import core.sys.posix.sys.types : pthread_cond_t, pthread_mutex_t;
     import core.sys.posix.time : timespec;
 }
+else version (WASI)
+{
+}
 else
 {
     static assert(false, "Platform not supported");
@@ -133,6 +136,14 @@ nothrow @nogc:
             m_manualReset = manualReset;
             m_initalized = true;
         }
+        else version (WASI)
+        {
+            if (m_initalized)
+                return;
+            m_state = initialState;
+            m_manualReset = manualReset;
+            m_initalized = true;
+        }
     }
 
     // copying not allowed, can produce resource leaks
@@ -167,6 +178,10 @@ nothrow @nogc:
                 m_initalized = false;
             }
         }
+        else version (WASI)
+        {
+            m_initalized = false;
+        }
     }
 
     deprecated ("Use setIfInitialized() instead") void set()
@@ -192,6 +207,13 @@ nothrow @nogc:
                 pthread_mutex_unlock(&m_mutex);
             }
         }
+        else version (WASI)
+        {
+            if (m_initalized)
+            {
+                m_state = true;
+            }
+        }
     }
 
     /// Reset the event manually
@@ -211,6 +233,13 @@ nothrow @nogc:
                 pthread_mutex_unlock(&m_mutex);
             }
         }
+        else version (WASI)
+        {
+            if (m_initalized)
+            {
+                m_state = false;
+            }
+        }
     }
 
     /**
@@ -226,6 +255,10 @@ nothrow @nogc:
             return m_event && WaitForSingleObject(m_event, INFINITE) == WAIT_OBJECT_0;
         }
         else version (Posix)
+        {
+            return wait(Duration.max);
+        }
+        else version (WASI)
         {
             return wait(Duration.max);
         }
@@ -290,6 +323,18 @@ nothrow @nogc:
 
             return result == 0;
         }
+        else version (WASI)
+        {
+            if (!m_initalized)
+                return false;
+            if (m_state)
+            {
+                if (!m_manualReset)
+                    m_state = false;
+                return true;
+            }
+            return false;
+        }
     }
 
 private:
@@ -301,6 +346,12 @@ private:
     {
         pthread_mutex_t m_mutex;
         pthread_cond_t m_cond;
+        bool m_initalized;
+        bool m_state;
+        bool m_manualReset;
+    }
+    else version (WASI)
+    {
         bool m_initalized;
         bool m_state;
         bool m_manualReset;

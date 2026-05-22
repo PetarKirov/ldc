@@ -36,10 +36,21 @@ template _d_cmain()
         {
             int _d_run_main(int argc, char** argv, void* mainFunc);
 
-            int main(int argc, char** argv)
+            version (WASI)
             {
-                pragma(LDC_profile_instr, false);
-                return _d_run_main(argc, argv, &_Dmain);
+                int __main_argc_argv(int argc, char** argv)
+                {
+                    pragma(LDC_profile_instr, false);
+                    return _d_run_main(argc, argv, &_Dmain);
+                }
+            }
+            else
+            {
+                int main(int argc, char** argv)
+                {
+                    pragma(LDC_profile_instr, false);
+                    return _d_run_main(argc, argv, &_Dmain);
+                }
             }
 
             // Solaris, for unknown reasons, requires both a main() and an _main()

@@ -65,6 +65,12 @@
  +/
 module core.time;
 
+version (Posix)
+    version = PosixOrWasi;
+else version (WASI)
+    version = PosixOrWasi;
+
+
 import core.exception;
 import core.internal.string;
 import core.stdc.time : time;
@@ -91,6 +97,27 @@ else version (Posix)
 {
     import core.sys.posix.sys.time : gettimeofday, timeval;
     import core.sys.posix.time : clock_getres, clock_gettime, CLOCK_MONOTONIC, timespec;
+}
+else version (WASI)
+{
+    import core.stdc.config : c_long;
+    extern (C) nothrow @nogc
+    {
+        struct timeval
+        {
+            long tv_sec;
+            c_long tv_usec;
+        }
+        struct timespec
+        {
+            long tv_sec;
+            c_long tv_nsec;
+        }
+        int gettimeofday(timeval* tv, void* tz);
+        int clock_getres(int clock_id, timespec* res);
+        int clock_gettime(int clock_id, timespec* tp);
+        enum CLOCK_MONOTONIC = 1;
+    }
 }
 
 version (unittest) import core.stdc.stdio : printf;
@@ -337,6 +364,13 @@ else version (Solaris) enum ClockType
     second = 6,
     threadCPUTime = 7,
 }
+else version (WASI) enum ClockType
+{
+    normal = 0,
+    coarse = 2,
+    precise = 3,
+    second = 6,
+}
 else
 {
     // It needs to be decided (and implemented in an appropriate version branch
@@ -350,7 +384,7 @@ else
 version (CoreDdoc)
     private int _posixClock(ClockType clockType) { return 0; }
 else
-version (Posix)
+version (PosixOrWasi)
 {
     private auto _posixClock(ClockType clockType)
     {
@@ -433,6 +467,16 @@ version (Posix)
             case precise: return CLOCK_MONOTONIC;
             case processCPUTime: return CLOCK_PROCESS_CPUTIME_ID;
             case threadCPUTime: return CLOCK_THREAD_CPUTIME_ID;
+            case second: assert(0);
+            }
+        }
+        else version (WASI)
+        {
+            with(ClockType) final switch (clockType)
+            {
+            case coarse: return CLOCK_MONOTONIC;
+            case normal: return CLOCK_MONOTONIC;
+            case precise: return CLOCK_MONOTONIC;
             case second: assert(0);
             }
         }
@@ -2132,6 +2176,10 @@ struct MonoTimeImpl(ClockType clockType)
     {
         enum clockArg = _posixClock(clockType);
     }
+    else version (WASI)
+    {
+        enum clockArg = _posixClock(clockType);
+    }
     else
         static assert(0, "Unsupported platform");
 
@@ -2179,7 +2227,7 @@ struct MonoTimeImpl(ClockType clockType)
         }
         else version (Darwin)
             return MonoTimeImpl(mach_absolute_time());
-        else version (Posix)
+        else version (PosixOrWasi)
         {
             timespec ts = void;
             immutable error = clock_gettime(clockArg, &ts);
@@ -2564,7 +2612,7 @@ extern(C) void _d_initMonoTime() @nogc nothrow
             tps[i] = ticksPerSecond;
         }
     }
-    else version (Posix)
+    else version (PosixOrWasi)
     {
         timespec ts;
         foreach (i, typeStr; __traits(allMembers, ClockType))
@@ -2892,6 +2940,18 @@ deprecated:
             }
             else
                 ticksPerSec = 1_000_000;
+        }
+        else version (WASI)
+        {
+            timespec ts;
+
+            if (clock_getres(CLOCK_MONOTONIC, &ts) != 0)
+                ticksPerSec = 0;
+            else
+            {
+                ticksPerSec = ts.tv_nsec >= 1000 ? 1_000_000_000
+                                                 : 1_000_000_000 / ts.tv_nsec;
+            }
         }
         else
             static assert(0, "Unsupported platform");
@@ -3461,6 +3521,18 @@ deprecated:
                 return TickDuration(tv.tv_sec * TickDuration.ticksPerSec +
                                     tv.tv_usec * TickDuration.ticksPerSec / 1000 / 1000);
             }
+        }
+        else version (WASI)
+        {
+            timespec ts = void;
+            immutable error = clock_gettime(CLOCK_MONOTONIC, &ts);
+            if (error)
+            {
+                import core.internal.abort : abort;
+                abort("Call to clock_gettime failed.");
+            }
+            return TickDuration(ts.tv_sec * TickDuration.ticksPerSec +
+                                ts.tv_nsec * TickDuration.ticksPerSec / 1000 / 1000 / 1000);
         }
     }
 

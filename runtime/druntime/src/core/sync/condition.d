@@ -41,6 +41,9 @@ else version (Posix)
         pthread_cond_signal, pthread_cond_t, pthread_cond_timedwait, pthread_cond_wait;
     import core.sys.posix.time : timespec;
 }
+else version (WASI)
+{
+}
 else
 {
     static assert(false, "Platform not supported");
@@ -158,6 +161,18 @@ class Condition
                     throw staticError!AssertError("Unable to initialize condition", __FILE__, __LINE__);
             }
         }
+        else version (WASI)
+        {
+            static if (is(Q == shared))
+            {
+                import core.atomic : atomicLoad;
+                m_assocMutex = atomicLoad(m);
+            }
+            else
+            {
+                m_assocMutex = m;
+            }
+        }
     }
 
     ~this() @nogc
@@ -174,6 +189,9 @@ class Condition
         {
             int rc = pthread_cond_destroy( &m_hndl );
             assert( !rc, "Unable to destroy condition" );
+        }
+        else version (WASI)
+        {
         }
     }
 
@@ -250,6 +268,20 @@ class Condition
             if ( rc )
                 throw staticError!AssertError("Unable to wait for condition", __FILE__, __LINE__);
         }
+        else version (WASI)
+        {
+            static if (is(Q == shared))
+            {
+                import core.atomic : atomicLoad;
+                auto m = atomicLoad(m_assocMutex);
+            }
+            else
+            {
+                auto m = m_assocMutex;
+            }
+            (cast(Mutex) m).unlock();
+            (cast(Mutex) m).lock();
+        }
     }
 
     /**
@@ -315,6 +347,21 @@ class Condition
                 return false;
             throw staticError!AssertError("Unable to wait for condition", __FILE__, __LINE__);
         }
+        else version (WASI)
+        {
+            static if (is(Q == shared))
+            {
+                import core.atomic : atomicLoad;
+                auto m = atomicLoad(m_assocMutex);
+            }
+            else
+            {
+                auto m = m_assocMutex;
+            }
+            (cast(Mutex) m).unlock();
+            (cast(Mutex) m).lock();
+            return false;
+        }
     }
 
     /**
@@ -363,6 +410,9 @@ class Condition
             if ( rc )
                 throw staticError!AssertError("Unable to notify condition", __FILE__, __LINE__);
         }
+        else version (WASI)
+        {
+        }
     }
 
     /**
@@ -410,6 +460,9 @@ class Condition
             } while ( rc == EAGAIN );
             if ( rc )
                 throw staticError!AssertError("Unable to notify condition", __FILE__, __LINE__);
+        }
+        else version (WASI)
+        {
         }
     }
 
@@ -615,6 +668,10 @@ private:
     {
         Mutex               m_assocMutex;
         pthread_cond_t      m_hndl;
+    }
+    else version (WASI)
+    {
+        Mutex               m_assocMutex;
     }
 }
 

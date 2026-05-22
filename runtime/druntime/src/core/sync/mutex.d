@@ -31,6 +31,9 @@ else version (Posix)
         pthread_mutexattr_init, pthread_mutexattr_settype;
     import core.sys.posix.sys.types : pthread_mutex_t, pthread_mutexattr_t;
 }
+else version (WASI)
+{
+}
 else
 {
     static assert(false, "Platform not supported");
@@ -99,6 +102,10 @@ class Mutex :
             !pthread_mutex_init(cast(pthread_mutex_t*) &m_hndl, &attr) ||
                 abort("Error: pthread_mutex_init failed.");
         }
+        else version (WASI)
+        {
+            // Single-threaded mock, no OS handle initialization needed
+        }
 
         m_proxy.link = this;
         this.__monitor = cast(void*) &m_proxy;
@@ -151,6 +158,9 @@ class Mutex :
             !pthread_mutex_destroy(&m_hndl) ||
                 abort("Error: pthread_mutex_destroy failed.");
         }
+        else version (WASI)
+        {
+        }
         this.__monitor = null;
     }
 
@@ -196,6 +206,10 @@ class Mutex :
             syncErr.msg = "Unable to lock mutex.";
             throw syncErr;
         }
+        else version (WASI)
+        {
+            return;
+        }
     }
 
     /**
@@ -234,6 +248,10 @@ class Mutex :
             syncErr.msg = "Unable to unlock mutex.";
             throw syncErr;
         }
+        else version (WASI)
+        {
+            return;
+        }
     }
 
     /**
@@ -271,6 +289,10 @@ class Mutex :
         {
             return pthread_mutex_trylock(&m_hndl) == 0;
         }
+        else version (WASI)
+        {
+            return true;
+        }
     }
 
 
@@ -282,6 +304,10 @@ private:
     else version (Posix)
     {
         pthread_mutex_t     m_hndl;
+    }
+    else version (WASI)
+    {
+        int                 m_hndl;
     }
 
     struct MonitorProxy
@@ -380,6 +406,7 @@ unittest
     version (CRuntime_Musl) {} else
     version (DragonFlyBSD) {} else
     version (Solaris) {} else
+    version (WASI) {} else
     assert(!mtx.tryLock_nothrow());
 
     free(cast(void*) mtx);

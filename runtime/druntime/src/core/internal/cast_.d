@@ -308,3 +308,59 @@ private bool _d_isbaseof2(To)(scope ClassInfo oc, scope ref size_t offset)
     const(C) const_c = new C();
     C mutable_c = cast() const_c;
 }
+
+bool _d_isbaseof(scope ClassInfo oc, scope ClassInfo c, scope ref size_t offset) pure nothrow @safe @nogc
+{
+    if (areClassInfosEqual(oc, c))
+        return true;
+
+    do
+    {
+        if (oc.base && areClassInfosEqual(oc.base, c))
+            return true;
+
+        foreach (iface; oc.interfaces)
+        {
+            if (areClassInfosEqual(iface.classinfo, c) || _d_isbaseof(iface.classinfo, c, offset))
+            {
+                offset += iface.offset;
+                return true;
+            }
+        }
+
+        oc = oc.base;
+    } while (oc);
+
+    return false;
+}
+
+extern(C) void* _d_interface_cast(void* p, ClassInfo c) @trusted
+{
+    if (!p)
+        return null;
+
+    Interface* pi = **cast(Interface***) p;
+
+    Object o2 = cast(Object)(p - pi.offset);
+    void* res = null;
+    size_t offset = 0;
+    if (o2 && _d_isbaseof(typeid(o2), c, offset))
+    {
+        res = cast(void*) o2 + offset;
+    }
+    return res;
+}
+
+extern(C) void* _d_dynamic_cast(Object o, ClassInfo c) @trusted
+{
+    if (!o)
+        return null;
+
+    size_t offset = 0;
+    if (_d_isbaseof(typeid(o), c, offset))
+    {
+        return cast(void*) o + offset;
+    }
+    return null;
+}
+

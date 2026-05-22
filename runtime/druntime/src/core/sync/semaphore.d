@@ -50,6 +50,9 @@ else version (Posix)
     import core.sys.posix.semaphore : sem_destroy, sem_init, sem_post, sem_t, sem_timedwait, sem_trywait, sem_wait;
     import core.sys.posix.time : clock_gettime, CLOCK_REALTIME, timespec;
 }
+else version (WASI)
+{
+}
 else
 {
     static assert(false, "Platform not supported");
@@ -107,6 +110,10 @@ class Semaphore
             if ( rc )
                 throw new SyncError( "Unable to create semaphore" );
         }
+        else version (WASI)
+        {
+            m_hndl = count;
+        }
     }
 
 
@@ -126,6 +133,9 @@ class Semaphore
         {
             int rc = sem_destroy( &m_hndl );
             assert( !rc, "Unable to destroy semaphore" );
+        }
+        else version (WASI)
+        {
         }
     }
 
@@ -171,6 +181,15 @@ class Semaphore
                 if ( errno != EINTR )
                     throw new SyncError( "Unable to wait for semaphore" );
             }
+        }
+        else version (WASI)
+        {
+            import core.thread : Thread;
+            while ( m_hndl == 0 )
+            {
+                Thread.yield();
+            }
+            --m_hndl;
         }
     }
 
@@ -268,6 +287,15 @@ class Semaphore
                     throw new SyncError( "Unable to wait for semaphore" );
             }
         }
+        else version (WASI)
+        {
+            if ( m_hndl > 0 )
+            {
+                --m_hndl;
+                return true;
+            }
+            return false;
+        }
     }
 
 
@@ -296,6 +324,10 @@ class Semaphore
             int rc = sem_post( &m_hndl );
             if ( rc )
                 throw new SyncError( "Unable to notify semaphore" );
+        }
+        else version (WASI)
+        {
+            ++m_hndl;
         }
     }
 
@@ -340,6 +372,15 @@ class Semaphore
                     throw new SyncError( "Unable to wait for semaphore" );
             }
         }
+        else version (WASI)
+        {
+            if ( m_hndl > 0 )
+            {
+                --m_hndl;
+                return true;
+            }
+            return false;
+        }
     }
 
 
@@ -351,6 +392,8 @@ protected:
     else version (Darwin)    alias Handle = semaphore_t;
     /// ditto
     else version (Posix)     alias Handle = sem_t;
+    /// ditto
+    else version (WASI)      alias Handle = uint;
 
     /// Handle to the system-specific semaphore.
     Handle m_hndl;

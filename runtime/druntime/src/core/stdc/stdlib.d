@@ -30,6 +30,8 @@ version (CRuntime_Glibc)
     version = AlignedAllocSupported;
 else version (CRuntime_Newlib)
     version = AlignedAllocSupported;
+else version (CRuntime_WASI)
+    version = AlignedAllocSupported;
 else {}
 
 extern (C):
@@ -257,4 +259,28 @@ version (CRuntime_Microsoft)
     long  _strtoi64(scope inout(char)*, scope inout(char)**,int);
     ///
     long  _wcstoi64(scope inout(wchar)*, scope inout(wchar)**,int);
+}
+
+version (WASI)
+{
+    // Required by the component model (WASIp2) to allocate memory across boundaries.
+    extern(C) export void* cabi_realloc(void* ptr, size_t old_size, size_t align_, size_t new_size)
+    {
+        if (new_size == 0)
+        {
+            free(ptr);
+            return null;
+        }
+        if (ptr == null)
+        {
+            // WASI libc aligned_alloc requires size to be a multiple of alignment
+            size_t rem = new_size % align_;
+            size_t alloc_size = new_size + (rem ? (align_ - rem) : 0);
+            return aligned_alloc(align_, alloc_size);
+        }
+
+        // Simplistic realloc. For larger alignments, a proper memory copy would be needed,
+        // but wasi-libc's realloc guarantees standard alignment (16 bytes).
+        return realloc(ptr, new_size);
+    }
 }

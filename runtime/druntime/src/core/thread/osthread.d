@@ -95,6 +95,10 @@ version (Windows)
     private extern (Windows) alias btex_fptr = uint function(void*);
     private extern (C) uintptr_t _beginthreadex(void*, uint, btex_fptr, void*, uint, uint*) nothrow @nogc;
 }
+else version (WASI)
+{
+    import core.stdc.stdlib : free, malloc, realloc;
+}
 else version (Posix)
 {
     static import core.sys.posix.pthread;
@@ -176,7 +180,14 @@ version (GNU)
 private extern(C) void* _d_eh_swapContext(void* newContext) nothrow @nogc;
 
 // LDC: changed from `version (DigitalMars)`
-version (all)
+version (WASI)
+{
+    extern(D) void* swapContext(void* newContext) nothrow @nogc
+    {
+        return null;
+    }
+}
+else version (all)
 {
     // LDC: changed from `version (Windows)`
     version (CRuntime_Microsoft)
@@ -257,6 +268,10 @@ class Thread : ThreadBase
     {
         private shared bool     m_isRunning;
     }
+    else version (WASI)
+    {
+        private shared bool     m_isRunning;
+    }
 
     version (Darwin)
     {
@@ -278,6 +293,10 @@ class Thread : ThreadBase
     else version (Posix)
     {
         alias TLSKey = pthread_key_t;
+    }
+    else version (WASI)
+    {
+        alias TLSKey = uint;
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -801,6 +820,12 @@ class Thread : ThreadBase
                 result.PRIORITY_MAX != -1 ||
                     assert(0, "Internal error in sched_get_priority_max");
             }
+            else version (WASI)
+            {
+                result.PRIORITY_MIN = 0;
+                result.PRIORITY_DEFAULT = 0;
+                result.PRIORITY_MAX = 0;
+            }
             else
             {
                 static assert(0, "Your code here.");
@@ -871,6 +896,10 @@ class Thread : ThreadBase
         {
            return fakePriority==int.max? PRIORITY_DEFAULT : fakePriority;
         }
+        else version (WASI)
+        {
+            return PRIORITY_DEFAULT;
+        }
         else version (Posix)
         {
             int         policy;
@@ -938,6 +967,10 @@ class Thread : ThreadBase
         else version (NetBSD)
         {
            fakePriority = val;
+        }
+        else version (WASI)
+        {
+            // no-op
         }
         else version (Posix)
         {
@@ -1019,6 +1052,10 @@ class Thread : ThreadBase
             uint ecode = 0;
             GetExitCodeThread( m_hndl, &ecode );
             return ecode == STILL_ACTIVE;
+        }
+        else version (WASI)
+        {
+            return atomicLoad(m_isRunning);
         }
         else version (Posix)
         {
@@ -1753,6 +1790,10 @@ in (fn)
             asm pure nothrow @nogc { ( "st.d $fp, %0") : "=m" (regs[17]); }
             asm pure nothrow @nogc { ( "st.d $sp, %0") : "=m" (sp); }
         }
+        else version (WebAssembly)
+        {
+            sp = &sp;
+        }
         else
         {
             static assert(false, "Architecture not supported.");
@@ -1782,6 +1823,10 @@ version (Posix)
 else version (Windows)
 {
     alias getpid = imported!"core.sys.windows.winbase".GetCurrentProcessId;
+}
+else version (WASI)
+{
+    int getpid() @nogc nothrow pure @safe { return 1; }
 }
 
 extern (C) @nogc nothrow
@@ -1948,6 +1993,16 @@ private extern(D) void* getStackBottom() nothrow @nogc
 
         thr_stksegment(&stk);
         return stk.ss_sp;
+    }
+    else version (WASI)
+    {
+        __gshared void* stackBottom;
+        if (stackBottom is null)
+        {
+            int dummy;
+            stackBottom = &dummy;
+        }
+        return stackBottom;
     }
     else
         static assert(false, "Platform not supported.");
@@ -2327,6 +2382,13 @@ private extern (D) bool suspend( Thread t ) nothrow @nogc
             t.m_curr.tstack = getStackTop();
         }
     }
+    else version (WASI)
+    {
+        if ( !t.m_lock )
+        {
+            t.m_curr.tstack = getStackTop();
+        }
+    }
     return true;
 }
 
@@ -2496,6 +2558,13 @@ private extern (D) void resume(ThreadBase _t) nothrow @nogc
             }
         }
         else if ( !t.m_lock )
+        {
+            t.m_curr.tstack = t.m_curr.bstack;
+        }
+    }
+    else version (WASI)
+    {
+        if ( !t.m_lock )
         {
             t.m_curr.tstack = t.m_curr.bstack;
         }
@@ -2997,6 +3066,9 @@ else version (Posix)
 
         }
     }
+}
+else version (WASI)
+{
 }
 else
 {

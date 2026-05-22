@@ -238,6 +238,19 @@ if(PHOBOS2_DIR)
         list(REMOVE_ITEM PHOBOS2_D ${PHOBOS2_D_WINDOWS})
     endif()
 
+    # exclude modules that require OS features not available on WASI
+    if("${TARGET_SYSTEM}" MATCHES "WASI")
+        list(REMOVE_ITEM PHOBOS2_D
+            ${PHOBOS2_DIR}/std/package.d
+            ${PHOBOS2_DIR}/std/socket.d
+            ${PHOBOS2_DIR}/std/process.d
+            ${PHOBOS2_DIR}/std/parallelism.d
+            ${PHOBOS2_DIR}/std/mmfile.d
+            ${PHOBOS2_DIR}/std/net/curl.d
+            ${PHOBOS2_DIR}/etc/c/curl.d
+        )
+    endif()
+
     if(PHOBOS_SYSTEM_ZLIB)
         find_package(ZLIB REQUIRED)
     else()

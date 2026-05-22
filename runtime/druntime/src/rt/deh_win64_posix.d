@@ -23,6 +23,10 @@ version (LDC)
     {
         // _d_eh_swapContext implemented in ldc.eh_msvc
     }
+    else version (WebAssembly)
+    {
+        // _d_eh_swapContext implemented in rt.wasi_exceptions
+    }
     else
         version = Win64_Posix;
 }

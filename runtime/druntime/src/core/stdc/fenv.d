@@ -559,6 +559,14 @@ else version (CRuntime_UClibc)
         static assert(false, "Architecture not supported.");
     }
 }
+else version (CRuntime_WASI)
+{
+    struct fenv_t
+    {
+        ulong __cw;
+    }
+    alias fexcept_t = ulong;
+}
 else
 {
     static assert( false, "Unsupported platform" );
@@ -626,6 +634,14 @@ else version (Solaris)
     else
     {
         static assert(0, "Unimplemented architecture");
+    }
+}
+else version (CRuntime_WASI)
+{
+    enum
+    {
+        FE_ALL_EXCEPT   = 0,
+        FE_TONEAREST    = 0,
     }
 }
 else
@@ -931,6 +947,11 @@ else version (CRuntime_UClibc)
 {
     ///
     enum FE_DFL_ENV = cast(fenv_t*)(-1);
+}
+else version (CRuntime_WASI)
+{
+    ///
+    enum FE_DFL_ENV = cast(const(fenv_t)*)(-1);
 }
 else
 {

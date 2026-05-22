@@ -573,6 +573,10 @@ package
                 jmp RCX;
             }
         }
+        else version (WASI)
+        {
+            assert(0, "Fibers not supported on WASI");
+        }
         else static if ( __traits( compiles, ucontext_t ) )
         {
             Fiber   cfib = Fiber.getThis();
@@ -1028,18 +1032,15 @@ protected:
         {
             VirtualFree( m_pmem, 0, MEM_RELEASE );
         }
+        else version (Posix)
+        {
+            import core.sys.posix.sys.mman : munmap;
+            munmap( m_pmem, m_size );
+        }
         else
         {
-            import core.sys.posix.sys.mman : mmap, munmap;
-
-            static if ( __traits( compiles, mmap ) )
-            {
-                munmap( m_pmem, m_size );
-            }
-            else
-            {
-                free( m_pmem );
-            }
+            import core.stdc.stdlib : free;
+            free( m_pmem );
         }
         m_pmem = null;
         m_ctxt = null;
@@ -1645,6 +1646,10 @@ protected:
             else static assert(false, "RISC-V only supports decrementing stacks");
 
             pstack = fiber_initStack(pstack, &fiber_trampoline);
+        }
+        else version (WASI)
+        {
+            assert(0, "Fibers not supported on WASI");
         }
         else static if ( __traits( compiles, ucontext_t ) )
         {

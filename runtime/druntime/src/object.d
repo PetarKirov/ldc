@@ -4775,6 +4775,15 @@ public import core.internal.array.arrayassign : _d_arrayassign_l;
 public import core.internal.array.arrayassign : _d_arrayassign_r;
 public import core.internal.array.arrayassign : _d_arraysetassign;
 public import core.internal.array.capacity : _d_arraysetlengthT;
+template _d_arraysetlengthTImpl(Tarr : T[], T)
+{
+    auto _d_arraysetlengthT(return ref scope Tarr arr, size_t newlength)
+    {
+        import core.internal.array.capacity : _d_arraysetlengthT;
+        return _d_arraysetlengthT!Tarr(arr, newlength);
+    }
+}
+
 public import core.internal.cast_: _d_cast;
 
 public import core.internal.dassert: _d_assert_fail;

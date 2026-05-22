@@ -17,12 +17,15 @@ module core.thread.types;
  */
 version (Windows)
     alias ThreadID = uint;
-else
-version (Posix)
+else version (Posix)
 {
     import core.sys.posix.sys.types : pthread_t;
 
     alias ThreadID = pthread_t;
+}
+else version (WASI)
+{
+    alias ThreadID = ulong;
 }
 
 struct ll_ThreadData

@@ -67,8 +67,13 @@ else version (CRuntime_Bionic)
     public import rt.sections_elf_shared;
 else version (CRuntime_UClibc)
     public import rt.sections_elf_shared;
+else version (WASI)
+{
+    // WASI does not support dynamic libraries / ELF sections range detection
+}
 else
     static assert(0, "unimplemented");
+
 
 import rt.deh, rt.minfo;
 

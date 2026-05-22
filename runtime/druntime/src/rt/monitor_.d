@@ -24,6 +24,9 @@ else version (Posix)
         pthread_mutexattr_settype;
     import core.sys.posix.sys.types : pthread_mutex_t, pthread_mutexattr_t;
 }
+else version (WASI)
+{
+}
 else
 {
     static assert(0, "Unsupported platform");
@@ -224,6 +227,15 @@ else version (Posix)
     {
         pthread_mutex_unlock(mtx) && assert(0);
     }
+}
+else version (WASI)
+{
+@nogc:
+    struct Mutex {}
+    void initMutex(Mutex* mtx) {}
+    void destroyMutex(Mutex* mtx) {}
+    void lockMutex(Mutex* mtx) {}
+    void unlockMutex(Mutex* mtx) {}
 }
 
 struct Monitor

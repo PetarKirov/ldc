@@ -223,6 +223,10 @@ private extern (C) void _initialize() @system
         GetSystemInfo(&si);
         (cast() pageSize) = cast(size_t) si.dwPageSize;
     }
+    else version (WASI)
+    {
+        (cast() pageSize) = 65536;
+    }
     else
         static assert(false, __FUNCTION__ ~ " is not implemented on this platform");
 }
@@ -1159,22 +1163,33 @@ void pureFree()(void* ptr) @system pure @nogc nothrow
 
 // locally purified for internal use here only
 
-static import core.stdc.errno;
-static if (__traits(getOverloads, core.stdc.errno, "errno").length == 1
-    && __traits(getLinkage, core.stdc.errno.errno) == "C")
+version (WASI)
 {
-    extern(C) pragma(mangle, __traits(identifier, core.stdc.errno.errno))
-    private ref int fakePureErrno() @nogc nothrow pure @system;
+    private ref int fakePureErrno() @nogc nothrow pure @system
+    {
+        alias FunType = ref int function() @nogc nothrow pure @system;
+        return (cast(FunType) &fakePureErrnoImpl)();
+    }
 }
 else
 {
-    extern(C) private @nogc nothrow pure @system
+    static import core.stdc.errno;
+    static if (__traits(getOverloads, core.stdc.errno, "errno").length == 1
+        && __traits(getLinkage, core.stdc.errno.errno) == "C")
     {
-        pragma(mangle, __traits(identifier, core.stdc.errno.getErrno))
-        @property int fakePureErrno();
+        extern(C) pragma(mangle, __traits(identifier, core.stdc.errno.errno))
+        private ref int fakePureErrno() @nogc nothrow pure @system;
+    }
+    else
+    {
+        extern(C) private @nogc nothrow pure @system
+        {
+            pragma(mangle, __traits(identifier, core.stdc.errno.getErrno))
+            @property int fakePureErrno();
 
-        pragma(mangle, __traits(identifier, core.stdc.errno.setErrno))
-        @property int fakePureErrno(int);
+            pragma(mangle, __traits(identifier, core.stdc.errno.setErrno))
+            @property int fakePureErrno(int);
+        }
     }
 }
 
@@ -1185,7 +1200,10 @@ extern (C) private @system @nogc nothrow
     ref int fakePureErrnoImpl()
     {
         import core.stdc.errno : errno;
-        return errno();
+        version (WASI)
+            return errno;
+        else
+            return errno();
     }
 }
 

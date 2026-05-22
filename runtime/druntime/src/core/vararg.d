@@ -160,6 +160,20 @@ void va_arg()(ref va_list ap, TypeInfo ti, void* parmn)
         ap += tsize.alignUp;
         parmn[0..tsize] = p[0..tsize];
     }
+    else version (WebAssembly)
+    {
+        const tsize = ti.tsize;
+        const talign = ti.talign;
+        // Runtime alignment: round ap up to talign boundary
+        if (talign > size_t.sizeof)
+        {
+            auto mask = talign - 1;
+            ap = cast(va_list)((cast(size_t) ap + mask) & ~mask);
+        }
+        auto p = cast(void*) ap;
+        ap += tsize.alignUp;
+        parmn[0..tsize] = p[0..tsize];
+    }
     else
         static assert(0, "Unsupported platform");
 }

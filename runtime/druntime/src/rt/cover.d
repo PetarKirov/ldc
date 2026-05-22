@@ -25,9 +25,26 @@ version (Windows)
 }
 else version (Posix)
 {
+    version = PosixOrWasi;
     import core.stdc.stdio : fopen;
     import core.sys.posix.fcntl : O_CREAT, O_RDWR, open, S_IRGRP, S_IROTH, S_IRUSR, S_IWGRP, S_IWOTH, S_IWUSR;
     import core.sys.posix.unistd : ftruncate;
+}
+else version (WASI)
+{
+    version = PosixOrWasi;
+    import core.stdc.stdio : fopen;
+    extern (C) int open(const(char)*, int, ...) nothrow @nogc;
+    extern (C) int ftruncate(int, long) nothrow @nogc;
+    extern (C) FILE* fdopen(int fd, const scope char* mode) @nogc nothrow;
+    enum O_RDWR = 0x14000000;
+    enum O_CREAT = 0x00001000;
+    enum S_IRUSR = 0x100;
+    enum S_IWUSR = 0x80;
+    enum S_IRGRP = 0x20;
+    enum S_IWGRP = 0x10;
+    enum S_IROTH = 0x4;
+    enum S_IWOTH = 0x2;
 }
 else
     static assert(0, "Unsupported platform");
@@ -325,7 +342,7 @@ shared static ~this()
 
         version (Windows)
             SetEndOfFile(handle(fileno(flst)));
-        else version (Posix)
+        else version (PosixOrWasi)
             ftruncate(fileno(flst), ftell(flst));
     }
 }
@@ -358,7 +375,7 @@ string appendFN( string path, string name )
 
     version (Windows)
         const char sep = '\\';
-    else version (Posix)
+    else version (PosixOrWasi)
         const char sep = '/';
 
     auto dest = path;
@@ -404,7 +421,7 @@ string getExt( string name )
             if ( name[i] == ':' || name[i] == '\\' )
                 break;
         }
-        else version (Posix)
+        else version (PosixOrWasi)
         {
             if ( name[i] == '/' )
                 break;
@@ -463,7 +480,7 @@ FILE* openOrCreateFile(string name)
 {
     version (Windows)
         immutable fd = _wopen(toUTF16z(name), _O_RDWR | _O_CREAT | _O_BINARY, _S_IREAD | _S_IWRITE);
-    else version (Posix)
+    else version (PosixOrWasi)
         immutable fd = open((name ~ '\0').ptr, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
                 S_IROTH | S_IWOTH);
     version (CRuntime_Microsoft)
@@ -497,6 +514,10 @@ void lockFile(int fd)
         // exclusively lock first byte
         LockFileEx(handle(fd), LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &off);
     }
+    else version (WASI)
+    {
+        // WASI is single-threaded and has no file locking
+    }
 }
 
 bool readFile(FILE* file, ref char[] buf)
@@ -525,7 +546,7 @@ bool readFile(string name, ref char[] buf)
 {
     version (Windows)
         auto file = _wfopen(toUTF16z(name), "rb"w.ptr);
-    else version (Posix)
+    else version (PosixOrWasi)
         auto file = fopen((name ~ '\0').ptr, "rb".ptr);
     if (file is null) return false;
     scope(exit) fclose(file);

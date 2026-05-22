@@ -1,5 +1,10 @@
 module core.internal.abort;
 
+version (WASI)
+{
+    private extern (C) int write(int fd, const(void)* buf, size_t count) @nogc nothrow @trusted;
+}
+
 /*
  * Use instead of assert(0, msg), since this does not print a message for -release compiled
  * code, and druntime is -release compiled.
@@ -39,6 +44,14 @@ void abort(scope string msg, scope string filename = __FILE__, size_t line = __L
                 assert(s.length <= uint.max);
                 WriteFile(h, s.ptr, cast(uint)s.length, null, null);
             }
+        }
+    }
+    else version (WASI)
+    {
+        static void writeStr(scope const(char)[][] m...) @nogc nothrow @trusted
+        {
+            foreach (s; m)
+                write(2, s.ptr, s.length);
         }
     }
     else

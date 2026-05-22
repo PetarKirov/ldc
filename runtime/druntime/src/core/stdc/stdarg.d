@@ -288,6 +288,16 @@ T va_arg(T)(ref va_list ap)
         ap += T.sizeof.alignUp;
         return *p;
     }
+    else version (WebAssembly)
+    {
+        // WebAssembly varargs: arguments are packed into linear memory,
+        // aligned to at least 4 bytes (size_t.sizeof on wasm32).
+        static if (T.alignof > size_t.sizeof)
+            ap = ap.alignUp!(T.alignof);
+        auto p = cast(T*) ap;
+        ap += T.sizeof.alignUp;
+        return *p;
+    }
     else
         static assert(0, "Unsupported platform");
 }

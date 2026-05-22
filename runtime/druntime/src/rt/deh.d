@@ -50,7 +50,9 @@ extern (C)
     }
 }
 
-version (LDC)
+version (WebAssembly)
+    public import rt.wasi_exceptions;
+else version (LDC)
     public import rt.deh_win64_posix;
 else version (GNU)
     public import gcc.deh;
