@@ -906,6 +906,9 @@ void registerPredefinedTargetVersions() {
     VersionCondition::addPredefinedGlobalIdent("CppRuntime_Clang"); // legacy
     break;
   case llvm::Triple::WASI:
+  case llvm::Triple::WASIp1:
+  case llvm::Triple::WASIp2:
+  case llvm::Triple::WASIp3:
     VersionCondition::addPredefinedGlobalIdent("WASI");
     VersionCondition::addPredefinedGlobalIdent("CRuntime_WASI");
     break;

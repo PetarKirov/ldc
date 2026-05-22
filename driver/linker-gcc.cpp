@@ -766,7 +766,9 @@ class LdArgsBuilder : public ArgsBuilder {
 int linkObjToBinaryGcc(llvm::StringRef outputPath,
                        const std::vector<std::string> &defaultLibNames) {
 #if LDC_WITH_LLD
-  if (useInternalLLDForLinking()) {
+  const bool isWasiComponent = global.params.targetTriple->getOS() == llvm::Triple::WASIp2 ||
+                               global.params.targetTriple->getOS() == llvm::Triple::WASIp3;
+  if (useInternalLLDForLinking() && !isWasiComponent) {
     LdArgsBuilder argsBuilder;
     argsBuilder.build(outputPath, defaultLibNames);
 
@@ -812,7 +814,9 @@ int linkObjToBinaryGcc(llvm::StringRef outputPath,
   std::unique_ptr<ArgsBuilder> argsBuilder;
   if (global.params.targetTriple->isOSBinFormatWasm()) {
     argsBuilder = std::make_unique<LdArgsBuilder>();
-    tool = getProgram("wasm-ld", &opts::linker);
+    const bool isWasiComponent = global.params.targetTriple->getOS() == llvm::Triple::WASIp2 ||
+                                 global.params.targetTriple->getOS() == llvm::Triple::WASIp3;
+    tool = getProgram(isWasiComponent ? "wasm-component-ld" : "wasm-ld", &opts::linker);
   } else {
     argsBuilder = std::make_unique<ArgsBuilder>();
     tool = getCC(argsBuilder->args);

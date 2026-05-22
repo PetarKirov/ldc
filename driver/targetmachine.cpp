@@ -560,6 +560,9 @@ createTargetMachine(const std::string targetTriple, const std::string arch,
       // We default to PIC code to avoid linking issues on FreeBSD, especially
       // on aarch64.
       relocModel = llvm::Reloc::PIC_;
+    } else if (triple.getOS() == llvm::Triple::WASIp2 || triple.getOS() == llvm::Triple::WASIp3) {
+      // WASI Preview 2 and 3 Component Model requires PIC.
+      relocModel = llvm::Reloc::PIC_;
     } else {
       // ARM for other than Darwin or Android defaults to static
       switch (triple.getArch()) {
