@@ -60,7 +60,7 @@ public:
 
   virtual ~ArgsBuilder() = default;
 
-  void build(llvm::StringRef outputPath,
+  virtual void build(llvm::StringRef outputPath,
              const std::vector<std::string> &defaultLibNames);
 
 private:
@@ -737,6 +737,44 @@ class LdArgsBuilder : public ArgsBuilder {
   void addSanitizers(const llvm::Triple &triple) override {}
 
   void addLinker() override {}
+
+  void build(llvm::StringRef outputPath,
+             const std::vector<std::string> &defaultLibNames) override {
+    auto triple = global.params.targetTriple;
+    bool isWasi = triple->getOS() == llvm::Triple::WASI || triple->getOS() == llvm::Triple::WASIp1 ||
+                  triple->getOS() == llvm::Triple::WASIp2 || triple->getOS() == llvm::Triple::WASIp3;
+                  
+    if (isWasi && !global.params.dll) {
+        const char* sysroot = std::getenv("WASI_SYSROOT");
+        if (sysroot) {
+            std::string sysrootStr(sysroot);
+            bool isReactor = triple->getOS() == llvm::Triple::WASIp2 || triple->getOS() == llvm::Triple::WASIp3;
+            if (isReactor) {
+                args.push_back(sysrootStr + "/lib/crt1-reactor.o");
+            } else {
+                args.push_back(sysrootStr + "/lib/crt1.o");
+            }
+        }
+    }
+    
+    ArgsBuilder::build(outputPath, defaultLibNames);
+    
+    if (isWasi) {
+        const char* sysroot = std::getenv("WASI_SYSROOT");
+        if (sysroot) {
+            std::string sysrootStr(sysroot);
+            args.push_back("-L" + sysrootStr + "/lib");
+            // Also common path for wasi-libc in newer SDKs
+            args.push_back("-L" + sysrootStr + "/lib/wasm32-wasi");
+            args.push_back("-lc");
+        }
+        
+        const char* compilerRt = std::getenv("COMPILER_RT_WASM32");
+        if (compilerRt) {
+            args.push_back(compilerRt);
+        }
+    }
+  }
 
   void addUserSwitches() override {
     if (!opts::ccSwitches.empty()) {
