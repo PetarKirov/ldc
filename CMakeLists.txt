@@ -909,54 +909,11 @@ add_subdirectory(tools)
 # Compiler ldc2.conf configuration
 #
 
-set(switches)
-
-list(APPEND switches "-defaultlib=phobos2-ldc,druntime-ldc")
-
-makeConfSection(NAME "30-compiler" SECTION "default"
-    BUILD
-    SWITCHES ${switches}
-    # -defaultlib is configure in runtime/CMakeLists.txt
-    POST_SWITCHES
-        "-I${PROJECT_SOURCE_DIR}/runtime/druntime/src"
-        "-I${PROJECT_BINARY_DIR}/import"
-        "-I${PROJECT_SOURCE_DIR}/runtime/phobos"
-        "-I${PROJECT_SOURCE_DIR}/runtime/jit-rt/d"
-
-    INSTALL
-    SWITCHES ${switches}
-    POST_SWITCHES "-I${INCLUDE_INSTALL_DIR}"
-)
-
-set(wasm_switches)
-list(APPEND wasm_switches -defaultlib=)
-# Default wasm stack is only 64kb, this is rather small, let's bump it to 1mb
-list(APPEND wasm_switches -L-z -Lstack-size=1048576)
-# Protect from stack overflow overwriting global memory
-list(APPEND wasm_switches -L--stack-first)
-if(LDC_WITH_LLD)
-    list(APPEND wasm_switches -link-internally)
-endif()
-# LLD 8+ requires (new) `--export-dynamic` for WebAssembly (https://github.com/ldc-developers/ldc/issues/3023).
-list(APPEND wasm_switches -L--export-dynamic)
-
-makeConfSection(NAME "55-target-wasm"
-    SECTION "^wasm(32|64)-"
-    SWITCHES ${wasm_switches}
-    LIB_DIRS OVERRIDE
-)
-
-if(DEFINED COMPILER_RT_LIBDIR_CONFIG)
-    message(STATUS "Adding ${COMPILER_RT_LIBDIR_CONFIG} to lib-dirs in configuration file")
-
-    makeConfSection(NAME "70-compiler-rt" SECTION "default"
-        BUILD
-        LIB_DIRS ${COMPILER_RT_LIBDIR_CONFIG}
-
-        INSTALL
-        LIB_DIRS ${COMPILER_RT_LIBDIR_CONFIG}
-    )
-endif()
+set(LDC_SRC_DRUNTIME_DIR "${PROJECT_SOURCE_DIR}/runtime/druntime/src")
+set(LDC_SRC_PHOBOS_DIR "${PROJECT_SOURCE_DIR}/runtime/phobos")
+set(LDC_SRC_JIT_RT_DIR "${PROJECT_SOURCE_DIR}/runtime/jit-rt/d")
+set(LDC_BIN_IMPORT_DIR "${PROJECT_BINARY_DIR}/import")
+include(LdcGenerateConf)
 
 #
 # Test and runtime targets. Note that enable_testing() is order-sensitive!
