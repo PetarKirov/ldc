@@ -297,6 +297,25 @@ set(RT_CONF_BASE_NAME "50-target-default" CACHE STRING "Base name of the generat
 
 set(RT_CONF_TRIPLE_REGEX "default" CACHE STRING "Regex for the target triple in the generated runtime .conf file")
 
+set(LDC_SRC_DRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/druntime/src")
+set(LDC_SRC_PHOBOS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/phobos")
+set(LDC_SRC_JIT_RT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/jit-rt/d")
+
+# The import dir (for gccbuiltins_*.di) is provided by the host compiler.
+# We deduce its location relative to LDC_EXE_FULL.
+get_filename_component(LDC_BIN_DIR ${LDC_EXE_FULL} DIRECTORY)
+if(EXISTS "${LDC_BIN_DIR}/../import/ldc/builtins.di")
+    set(LDC_BIN_IMPORT_DIR "${LDC_BIN_DIR}/../import")
+else()
+    set(LDC_BIN_IMPORT_DIR "${LDC_BIN_DIR}/../include/d") # installed LDC
+endif()
+
+# We can rely on the default INCLUDE_INSTALL_DIR for installation
+set(INCLUDE_INSTALL_DIR "%%ldcbinarypath%%/../include/d")
+
+include(LdcGenerateConf)
+
+
 makeConfSection(NAME ${RT_CONF_BASE_NAME}
     SECTION ${RT_CONF_TRIPLE_REGEX}
 
