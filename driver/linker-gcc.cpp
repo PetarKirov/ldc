@@ -734,6 +734,7 @@ void ArgsBuilder::addTargetFlags() { appendTargetArgsForGcc(args); }
 // Specialization for plain ld.
 
 class LdArgsBuilder : public ArgsBuilder {
+public:
   void addSanitizers(const llvm::Triple &triple) override {}
 
   void addLinker() override {}
