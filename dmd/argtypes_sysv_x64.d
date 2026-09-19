@@ -67,7 +67,12 @@ TypeTuple toArgTypes_sysv_x64(Type t)
         foreach (c; classes[1 .. $])
             assert(c == Class.sseUp);
 
-        assert(size % 8 == 0);
+        // IN_LLVM: LDC accepts vector types of any size (e.g. a 12-byte
+        // `__vector(float[3])`), which fill their last eightbyte partially.
+        version (IN_LLVM)
+            assert(size <= N * 8);
+        else
+            assert(size % 8 == 0);
         import dmd.typesem : sarrayOf;
         return new TypeTuple(new TypeVector(Type.tfloat64.sarrayOf(N)));
     }

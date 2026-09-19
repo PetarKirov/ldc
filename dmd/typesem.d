@@ -1182,7 +1182,23 @@ uint alignsize(Type _this)
 
     switch(_this.ty)
     {
-        case Tvector: return cast(uint)_this.isTypeVector().basetype.size();
+        case Tvector:
+        {
+            const sz = cast(uint)_this.isTypeVector().basetype.size();
+            version (IN_LLVM)
+            {
+                // LDC accepts vectors of any size (`__vector(float[3])` is
+                // 12 bytes), and LLVM's data layout aligns such a vector to
+                // the next power of two — so must the frontend, or struct
+                // layouts disagree and an alloca asks for a 12-byte alignment.
+                uint a = 1;
+                while (a < sz)
+                    a <<= 1;
+                return a;
+            }
+            else
+                return sz;
+        }
         case Tsarray: return _this.isTypeSArray().next.alignsize();
         // A DArray consists of two ptr-sized values, so align it on pointer size boundary
         case Tarray, Tdelegate: return target.ptrsize;
