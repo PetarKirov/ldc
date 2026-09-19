@@ -82,6 +82,10 @@ IrTypeStruct *IrTypeStruct::get(StructDeclaration *sd) {
     VarGEPIndices v;
     v[sd->fields[0]] = 0;
     t->varGEPIndices = v;
+  } else if (gIR->dcomputetarget && toDcomputeOpaqueHandleType(sd)) {
+    // An opaque shader resource handle: not a struct at all on the device,
+    // but the SPIR-V target extension type itself.
+    t->type = toDcomputeOpaqueHandleType(sd);
   } else {
     AggrTypeBuilder builder;
     builder.addAggregate(sd);
