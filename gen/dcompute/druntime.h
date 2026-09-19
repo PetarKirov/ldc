@@ -25,6 +25,7 @@ class Type;
 
 bool isFromLDC_DCompute(Dsymbol *sym);
 bool isFromLDC_OpenCL(Dsymbol *sym);
+bool isFromLDC_Intrinsics(Dsymbol *sym);
 
 struct DcomputePointer {
   int addrspace;
@@ -39,3 +40,7 @@ struct DcomputePointer {
   }
 };
 std::optional<DcomputePointer> toDcomputePointer(StructDeclaration *sd);
+
+/// The opaque SPIR-V target type `sd` stands for (`ldc.dcompute.Image2D` ->
+/// `spirv.Image`, `ldc.dcompute.Sampler` -> `spirv.Sampler`), or nullptr.
+llvm::Type *toDcomputeOpaqueHandleType(StructDeclaration *sd);
