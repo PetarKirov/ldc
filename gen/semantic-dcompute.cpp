@@ -24,6 +24,7 @@
 #include "dmd/identifier.h"
 #include "dmd/module.h"
 #include "dmd/template.h"
+#include "gen/dcompute/druntime.h"
 #include "gen/dcompute/target.h"
 #include "gen/logger.h"
 #include "gen/recursivevisitor.h"
@@ -46,6 +47,15 @@ struct DComputeSemanticAnalyser : public StoppableVisitor {
     // their `isEqual`/`at` helpers) are the lowering for array `<`/`==` and are
     // legal in device code even though those modules are host-only.
     if (isDeviceArrayComparisonHook(f))
+      return true;
+    // `ldc.intrinsics` declares LLVM intrinsics, which are target-neutral by
+    // definition: `llvm.floor` lowers to `GLSL.std.450 Floor` on SPIR-V just
+    // as it lowers to `roundss` on x86. Device code may call them directly.
+    if (isFromLDC_Intrinsics(f))
+      return true;
+    // Likewise `ldc.dcompute` itself: its helpers (`Sampler2D.sample`, …)
+    // exist only to be called from device code.
+    if (isFromLDC_DCompute(f))
       return true;
     if (currentFunction == nullptr)
       return false;
