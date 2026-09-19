@@ -185,10 +185,15 @@ enum uniform = _uniform();
 
 // The handles below are opaque `spirv.Image` / `spirv.Sampler` values in
 // device code; the pointer-sized field only gives the frontend a size that
-// matches the backend's layout type.
+// matches the backend's layout type. They are scalars to the backend, never
+// members of anything: Vulkan forbids an opaque handle inside a composite or
+// in a Function-storage variable, so a "combined" image + sampler pair cannot
+// be a struct. GLSL's `sampler2D` is therefore modelled as the image handle
+// alone, and every image is sampled through one shared sampler at binding 0.
 
-/// An opaque sampled 2-D image handle (`OpTypeImage ... 2D`).
-struct Image2D
+/// A sampled 2-D image: GLSL's `sampler2D`. As a `@fragment` parameter it
+/// becomes a descriptor at the next image binding, named after the parameter.
+struct Sampler2D
 {
     const(void)* handle;
 }
@@ -199,35 +204,29 @@ struct Sampler
     const(void)* handle;
 }
 
+/// The one sampler every image is read through: set 0, binding 0. The
+/// compiler materialises the handle at each call.
+Sampler __spirv_shared_sampler() @safe pure nothrow @nogc;
+
 static if (__traits(compiles, { __vector(float[2]) a; __vector(float[4]) b; __vector(int[2]) c; }))
 {
-    /// A combined image + sampler pair: GLSL's `sampler2D`.
-    struct Sampler2D
-    {
-        Image2D image;
-        Sampler sampler;
-    }
-
     /++
      + Samples the image at normalised `uv`: GLSL's `texture(s, uv)`.
      +
-     + A free function taking the pair $(I by value), not a method: a method's
-     + `this` is a pointer, which puts the pair in a Function-storage variable,
-     + and Vulkan forbids an opaque handle to live in one. By value it is an
-     + aggregate the backend unpacks into the two handles the intrinsic wants.
      + A template so that druntime's own host build never compiles it — the
-     + intrinsic's signature only holds on the device.
+     + intrinsic's signature only holds on the device. UFCS keeps the call
+     + site as `texture0.sample(uv)`.
      +/
     __vector(float[4]) sample(S : Sampler2D)(S s, __vector(float[2]) uv)
         @safe pure nothrow @nogc
     {
         __vector(int[2]) noOffset = 0;
-        return __spirv_resource_sample_2d(s.image, s.sampler, uv, noOffset);
+        return __spirv_resource_sample_2d(s, __spirv_shared_sampler(), uv, noOffset);
     }
 
     // A texture read: pure in the only sense that matters to a shader (the
     // image is immutable for the draw), and never allocates or throws.
     pragma(LDC_intrinsic, "llvm.spv.resource.sample.v4f32.tspirv.Image_f32_1_2_0_0_1_0t.tspirv.Samplert.v2f32.v2i32")
-    __vector(float[4]) __spirv_resource_sample_2d(Image2D image, Sampler sampler,
+    __vector(float[4]) __spirv_resource_sample_2d(Sampler2D image, Sampler sampler,
         __vector(float[2]) uv, __vector(int[2]) offset) @safe pure nothrow @nogc;
 }
