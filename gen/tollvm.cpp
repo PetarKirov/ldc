@@ -43,6 +43,12 @@
 using namespace dmd;
 
 bool DtoIsInMemoryOnly(Type *type) {
+  // An opaque shader resource handle is a scalar on the device: it lives in
+  // SSA form, never in a Function-storage variable (which Vulkan forbids).
+  if (gIR && gIR->dcomputetarget && type->toBasetype()->ty == TY::Tstruct &&
+      toDcomputeOpaqueHandleType(static_cast<TypeStruct *>(type->toBasetype())->sym))
+    return false;
+
   Type *typ = type->toBasetype();
   TY t = typ->ty;
   return (t == TY::Tstruct || t == TY::Tsarray);
