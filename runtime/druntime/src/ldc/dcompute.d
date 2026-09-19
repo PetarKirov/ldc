@@ -214,13 +214,16 @@ static if (__traits(compiles, { __vector(float[2]) a; __vector(float[4]) b; __ve
         /// compiled into druntime for the host — a template is instantiated
         /// where it is used, which is only ever device code.
         __vector(float[4]) sample(this This)(__vector(float[2]) uv) const
+            @safe pure nothrow @nogc
         {
             __vector(int[2]) noOffset = 0;
             return __spirv_resource_sample_2d(image, sampler, uv, noOffset);
         }
     }
 
+    // A texture read: pure in the only sense that matters to a shader (the
+    // image is immutable for the draw), and never allocates or throws.
     pragma(LDC_intrinsic, "llvm.spv.resource.sample.v4f32.tspirv.Image_f32_1_2_0_0_1_0t.tspirv.Samplert.v2f32.v2i32")
     __vector(float[4]) __spirv_resource_sample_2d(Image2D image, Sampler sampler,
-        __vector(float[2]) uv, __vector(int[2]) offset);
+        __vector(float[2]) uv, __vector(int[2]) offset) @safe pure nothrow @nogc;
 }
