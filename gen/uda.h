@@ -31,6 +31,13 @@ void applyVarDeclUDAs(VarDeclaration *decl, llvm::GlobalVariable *gvar);
 bool hasCallingConventionUDA(FuncDeclaration *fd, llvm::CallingConv::ID *callconv);
 bool hasWeakUDA(Dsymbol *sym);
 StructLiteralExp *getKernelAttr(Dsymbol *sym);
+
+/// Returns the `@ldc.dcompute._shader` UDA applied to `sym`, or nullptr.
+StructLiteralExp *getShaderAttr(Dsymbol *sym);
+/// Whether `sym` (a `@fragment` parameter) carries `@ldc.dcompute.input`.
+bool hasShaderInputUDA(Dsymbol *sym);
+/// Whether `sym` (a `@fragment` parameter) carries `@ldc.dcompute.uniform`.
+bool hasShaderUniformUDA(Dsymbol *sym);
 /// Must match ldc.dcompute.Compilefor + 1 == DComputeCompileFor
 enum class DComputeCompileFor : int
 {

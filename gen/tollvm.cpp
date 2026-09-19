@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gen/tollvm.h"
+#include "gen/dcompute/druntime.h"
 
 #include "dmd/aggregate.h"
 #include "dmd/declaration.h"
@@ -118,6 +119,11 @@ LLType *DtoType(Type *t) {
     AggregateDeclaration *ad;
     if (isStruct) {
       ad = static_cast<TypeStruct *>(t)->sym;
+      // An opaque shader resource handle is the SPIR-V target extension type
+      // itself on the device, whatever `Type` object (const, …) names it.
+      if (gIR->dcomputetarget)
+        if (auto handle = toDcomputeOpaqueHandleType(static_cast<StructDeclaration *>(ad)))
+          return handle;
     } else {
       ad = static_cast<TypeClass *>(t)->sym;
     }

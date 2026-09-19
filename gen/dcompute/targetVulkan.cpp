@@ -20,6 +20,8 @@
 #include "gen/dcompute/druntime.h"
 #include "gen/logger.h"
 #include "gen/optimizer.h"
+#include "gen/uda.h"
+#include "dmd/errors.h"
 #include "driver/targetmachine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Target/TargetMachine.h"
@@ -52,7 +54,17 @@ public:
     _ir->dcomputetarget = this;
   }
 
-  void addMetadata() override {}
+  void addMetadata() override {
+    // Vulkan SPIR-V has no linkage: every function but the entry points must
+    // be internal, or the module needs the `Linkage` capability and fails
+    // validation. Entry points carry `hlsl.shader`; everything else that has a
+    // body is a helper the entry points call.
+    for (auto &f : _ir->module.functions()) {
+      if (f.isDeclaration() || f.hasFnAttribute("hlsl.shader"))
+        continue;
+      f.setLinkage(llvm::GlobalValue::InternalLinkage);
+    }
+  }
 
   llvm::AttrBuilder buildKernAttrs(StructLiteralExp *kernAttr) {
     auto b = llvm::AttrBuilder(ctx);
@@ -184,11 +196,167 @@ public:
       }
     }
 
-    builder.CreateCall(llf->getFunctionType(), llf, args);
+    auto *kernelCall = builder.CreateCall(llf->getFunctionType(), llf, args);
+    kernelCall->setCallingConv(llf->getCallingConv());
     builder.CreateRetVoid();
     IF_LOG Logger::cout() << *f << std::endl;
   }
 
+  // ---- graphics stages ----------------------------------------------------
+
+  /// Attaches a `spirv.Decorations` node carrying one `Location N` decoration.
+  void decorateLocation(llvm::GlobalVariable *gv, unsigned location) {
+    auto *i32 = getI32Type();
+    llvm::Metadata *pair[] = {
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32, 30)), // Location
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32, location))};
+    gv->addMetadata("spirv.Decorations",
+                    *llvm::MDNode::get(ctx, {llvm::MDNode::get(ctx, pair)}));
+  }
+
+  /// An interface variable (`Input`/`Output` storage class): thread-local,
+  /// externally initialised, no initializer -- the shape the HLSL frontend
+  /// emits, which the backend recognises as needing no Linkage capability.
+  llvm::GlobalVariable *buildInterfaceVariable(llvm::Type *ty, unsigned addrSpace,
+                                               bool isConstant, llvm::StringRef name,
+                                               unsigned location) {
+    // Two entry points in one module naming the same varying share one
+    // variable: the name is the contract with the vertex stage (GLSL links
+    // `in`/`out` by name), and an LLVM-renamed duplicate would break it.
+    if (auto *existing = _ir->module.getGlobalVariable(name, true)) {
+      if (existing->getValueType() == ty &&
+          existing->getAddressSpace() == addrSpace)
+        return existing;
+      error(Loc(), "shader interface variable `%s` declared with two types",
+            name.str().c_str());
+      fatal();
+    }
+    auto *gv = new llvm::GlobalVariable(
+        _ir->module, ty, isConstant, llvm::GlobalValue::ExternalLinkage, nullptr,
+        name, nullptr, llvm::GlobalValue::GeneralDynamicTLSModel, addrSpace,
+        /*isExternallyInitialized=*/true);
+    gv->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    decorateLocation(gv, location);
+    return gv;
+  }
+
+  /// A plain (non-block) uniform: `UniformConstant` storage, no initializer.
+  llvm::GlobalVariable *buildUniform(llvm::Type *ty, llvm::StringRef name) {
+    if (auto *existing = _ir->module.getGlobalVariable(name, true)) {
+      if (existing->getValueType() == ty && existing->getAddressSpace() == 2)
+        return existing;
+      error(Loc(), "shader uniform `%s` declared with two types",
+            name.str().c_str());
+      fatal();
+    }
+    auto *gv = new llvm::GlobalVariable(
+        _ir->module, ty, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
+        llvm::PoisonValue::get(ty), name, nullptr,
+        llvm::GlobalValue::NotThreadLocal, /*UniformConstant*/ 2);
+    gv->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    return gv;
+  }
+
+  /// `llvm.spv.resource.handlefrombinding` for one descriptor.
+  llvm::Value *buildResourceHandle(llvm::IRBuilder<> &builder, llvm::Type *handleTy,
+                                   unsigned binding, const std::string &name) {
+    auto *i32 = getI32Type();
+    return buildIntrinsicCall(
+        builder, name, "llvm.spv.resource.handlefrombinding", {handleTy},
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, binding),
+         llvm::ConstantInt::get(i32, 1), llvm::ConstantInt::get(i32, 0),
+         _ir->getCachedStringLiteral(name, 0)});
+  }
+
+  void addShaderEntry(FuncDeclaration *fd, llvm::Function *llf,
+                      StructLiteralExp *shaderAttr) override {
+    const auto stage = toInteger((*shaderAttr->elements)[0]);
+    if (stage != 0) {
+      error(fd->loc, "unsupported shader stage %d", static_cast<int>(stage));
+      fatal();
+    }
+
+    // The entry point is named after the D function so a consumer can pick
+    // it by `--entry`; the D function itself becomes an internal helper that
+    // the always-inliner folds into it, so no opaque handle ever lives in a
+    // Function-storage variable (which Vulkan forbids).
+    auto *void_func_void =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {}, false);
+    auto *f = llvm::Function::Create(void_func_void,
+                                     llvm::GlobalValue::ExternalLinkage,
+                                     fd->ident->toChars(), _ir->module);
+    f->addFnAttr("hlsl.shader", "pixel");
+    llf->setLinkage(llvm::GlobalValue::InternalLinkage);
+    llf->addFnAttr(llvm::Attribute::AlwaysInline);
+
+    auto bb = llvm::BasicBlock::Create(ctx, "entry", f);
+    llvm::IRBuilder<> builder(ctx);
+    builder.SetInsertPoint(bb);
+
+    llvm::FunctionType *tf = llf->getFunctionType();
+    const size_t nparams = fd->parameters ? fd->parameters->length : 0;
+    if (tf->getNumParams() != nparams) {
+      error(fd->loc, "`@fragment` function parameters cannot be rewritten "
+                     "by the ABI; use vector, scalar, or `Sampler2D` parameters");
+      fatal();
+    }
+
+    unsigned nextLocation = 0;
+    unsigned nextBinding = 0;
+    llvm::SmallVector<llvm::Value *, 8> args(nparams);
+    for (size_t i = 0; i < nparams; i++) {
+      VarDeclaration *vd = (*fd->parameters)[i];
+      llvm::Type *pt = tf->getParamType(i);
+      const char *name = vd->ident->toChars();
+      Type *dty = vd->type->toBasetype();
+      StructDeclaration *sd =
+          dty->ty == TY::Tstruct ? static_cast<TypeStruct *>(dty)->sym : nullptr;
+
+      if (hasShaderInputUDA(vd)) {
+        auto *gv = buildInterfaceVariable(pt, /*Input*/ 7, /*isConstant=*/true,
+                                          name, nextLocation++);
+        args[i] = builder.CreateLoad(pt, gv, name);
+      } else if (hasShaderUniformUDA(vd)) {
+        args[i] = builder.CreateLoad(pt, buildUniform(pt, name), name);
+      } else if (sd && sd->ident == Id::dcSampler2D && isFromLDC_DCompute(sd)) {
+        auto *st = llvm::dyn_cast<llvm::StructType>(pt);
+        if (!st || st->getNumElements() != 2) {
+          error(vd->loc, "ICE: unexpected lowering of `Sampler2D`");
+          fatal();
+        }
+        const std::string imageName = name;
+        const std::string samplerName = std::string(name) + "_sampler";
+        auto *image = buildResourceHandle(builder, st->getElementType(0),
+                                          nextBinding++, imageName);
+        auto *sampler = buildResourceHandle(builder, st->getElementType(1),
+                                            nextBinding++, samplerName);
+        llvm::Value *pair = llvm::PoisonValue::get(st);
+        pair = builder.CreateInsertValue(pair, image, 0);
+        pair = builder.CreateInsertValue(pair, sampler, 1);
+        args[i] = pair;
+      } else {
+        error(vd->loc,
+              "`@fragment` parameter `%s` must be marked `@input` or "
+              "`@uniform`, or be a `Sampler2D`",
+              name);
+        fatal();
+      }
+    }
+
+    auto *call = builder.CreateCall(tf, llf, args);
+    // The helper is SPIR_FUNC; a call with the default convention would be
+    // a mismatch LLVM's inliner refuses to fold and the verifier flags.
+    call->setCallingConv(llf->getCallingConv());
+    llvm::Value *result = call;
+    if (!tf->getReturnType()->isVoidTy()) {
+      auto *out = buildInterfaceVariable(tf->getReturnType(), /*Output*/ 8,
+                                         /*isConstant=*/false, "finalColor",
+                                         /*location=*/0);
+      builder.CreateStore(result, out);
+    }
+    builder.CreateRetVoid();
+    IF_LOG Logger::cout() << *f << std::endl;
+  }
 };
 } // anonymous namespace.
 
