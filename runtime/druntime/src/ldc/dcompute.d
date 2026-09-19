@@ -127,3 +127,100 @@ alias GenericPointer(T)  = Pointer!(AddrSpace.Generic,  T);
 alias Global(T)   = /*__gshared*/ Variable!(AddrSpace.Global,   T);
 alias Shared(T)   = shared        Variable!(AddrSpace.Shared,   T);
 alias Constant(T) = immutable     Variable!(AddrSpace.Constant, T);
+
+/++
+ + Graphics shader stages (Vulkan/SPIR-V target only).
+ +
+ + `@fragment` marks a function in a `@compute` module as a fragment (pixel)
+ + shader entry point. The function itself stays an ordinary D function; the
+ + compiler synthesises the shader interface around it from its signature:
+ +
+ + $(UL
+ +   $(LI each `@input` parameter becomes an `Input` interface variable named
+ +        after the parameter, at the next location (a GLSL `in`/varying),)
+ +   $(LI each `@uniform` parameter becomes a plain uniform named after the
+ +        parameter (a GLSL `uniform`),)
+ +   $(LI each `Sampler2D` parameter becomes a combined image + sampler pair at
+ +        the next descriptor binding (a GLSL `sampler2D`), and)
+ +   $(LI the return value is stored to the fragment's colour output at
+ +        location 0.)
+ + )
+ +
+ + Examples:
+ + ---
+ + @compute(CompileFor.deviceOnly) module foo;
+ + import ldc.dcompute;
+ +
+ + @fragment __vector(float[4]) tint(@input __vector(float[2]) fragTexCoord,
+ +     @input __vector(float[4]) fragColor, Sampler2D texture0,
+ +     @uniform float uAmount)
+ + {
+ +     return texture0.sample(fragTexCoord) * fragColor * uAmount;
+ + }
+ + ---
+ +/
+enum ShaderStage : int
+{
+    fragment = 0,
+}
+
+/// ditto
+private struct _shader
+{
+    ShaderStage stage;
+}
+
+/// ditto
+enum fragment = _shader(ShaderStage.fragment);
+
+/// Marks a `@fragment` parameter as an interface input (a varying).
+private struct _input {}
+/// ditto
+enum input = _input();
+
+/// Marks a `@fragment` parameter as a uniform.
+private struct _uniform {}
+/// ditto
+enum uniform = _uniform();
+
+// The handles below are opaque `spirv.Image` / `spirv.Sampler` values in
+// device code; the pointer-sized field only gives the frontend a size that
+// matches the backend's layout type.
+
+/// An opaque sampled 2-D image handle (`OpTypeImage ... 2D`).
+struct Image2D
+{
+    const(void)* handle;
+}
+
+/// An opaque sampler handle (`OpTypeSampler`).
+struct Sampler
+{
+    const(void)* handle;
+}
+
+static if (__traits(compiles, { __vector(float[2]) a; __vector(float[4]) b; __vector(int[2]) c; }))
+{
+    /// A combined image + sampler pair: GLSL's `sampler2D`.
+    struct Sampler2D
+    {
+        Image2D image;
+        Sampler sampler;
+
+        /// Samples the image at normalised `uv`: GLSL's `texture(s, uv)`.
+        ///
+        /// A `this`-template on purpose: the body names a SPIR-V intrinsic
+        /// whose signature only holds on the device, so it must never be
+        /// compiled into druntime for the host — a template is instantiated
+        /// where it is used, which is only ever device code.
+        __vector(float[4]) sample(this This)(__vector(float[2]) uv) const
+        {
+            __vector(int[2]) noOffset = 0;
+            return __spirv_resource_sample_2d(image, sampler, uv, noOffset);
+        }
+    }
+
+    pragma(LDC_intrinsic, "llvm.spv.resource.sample.v4f32.tspirv.Image_f32_1_2_0_0_1_0t.tspirv.Samplert.v2f32.v2i32")
+    __vector(float[4]) __spirv_resource_sample_2d(Image2D image, Sampler sampler,
+        __vector(float[2]) uv, __vector(int[2]) offset);
+}

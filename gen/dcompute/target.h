@@ -58,6 +58,10 @@ public:
   virtual void addKernelMetadata(FuncDeclaration *df,
                                  llvm::Function *llf,
                                  StructLiteralExp *kernAttr) = 0;
+  /// Synthesises a graphics shader entry point around `llf` for a function
+  /// marked `@ldc.dcompute.fragment`. Only the Vulkan target supports it.
+  virtual void addShaderEntry(FuncDeclaration *df, llvm::Function *llf,
+                              StructLiteralExp *shaderAttr);
 };
 
 #if LDC_LLVM_SUPPORTED_TARGET_NVPTX

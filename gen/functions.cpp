@@ -1358,6 +1358,9 @@ void DtoDefineFunction(FuncDeclaration *fd, bool linkageAvailableExternally) {
     if (kernAttr) {
       auto fn = gIR->module.getFunction(fd->mangleString);
       gIR->dcomputetarget->addKernelMetadata(fd, fn, kernAttr);
+    } else if (auto shaderAttr = getShaderAttr(fd)) {
+      auto fn = gIR->module.getFunction(fd->mangleString);
+      gIR->dcomputetarget->addShaderEntry(fd, fn, shaderAttr);
     }
   }
 
