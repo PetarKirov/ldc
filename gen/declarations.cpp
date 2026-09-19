@@ -30,6 +30,7 @@
 #include "gen/tollvm.h"
 #include "gen/typinf.h"
 #include "gen/uda.h"
+#include "gen/dcompute/druntime.h"
 #include "ir/irdsymbol.h"
 #include "ir/irtype.h"
 #include "ir/irvar.h"
@@ -354,6 +355,23 @@ public:
       return;
     }
 
+    if (!irs->dcomputetarget && decl->tempdecl) {
+      // The mirror image of the device-side rule below: an instance that
+      // only device code asked for — one owned by a device-only module, or
+      // one of `ldc.dcompute`'s own helpers (`Sampler2D.sample`, whose body
+      // names a SPIR-V intrinsic) — must not be emitted for the host. When a
+      // device-only module is compiled together with a host module, the
+      // frontend can hand such an instance to the host module's object.
+      Module *owner = decl->minst;
+      Module *home = decl->tempdecl->getModule();
+      if ((owner && hasComputeAttr(owner) == DComputeCompileFor::deviceOnly) ||
+          (home && isFromLDC_DCompute(decl->tempdecl))) {
+        Logger::println("Skipping device-only template instantiation "
+                        "in host module.");
+        return;
+      }
+    }
+
     if (irs->dcomputetarget && decl->tempdecl) {
       if (decl->tempdecl == Type::rtinfo || decl->tempdecl == Type::rtinfoImpl) {
         // Emitting object.RTInfo(Impl) template instantiations in dcompute
@@ -364,7 +382,8 @@ public:
       }
       Module *m = decl->tempdecl->getModule();
       if (m && hasComputeAttr(m) == DComputeCompileFor::hostOnly &&
-          !isDeviceArrayComparisonHook(decl->tempdecl)) {
+          !isDeviceArrayComparisonHook(decl->tempdecl) &&
+          !isFromLDC_DCompute(decl->tempdecl)) {
         Logger::println("Skipping host-side template instantiations "
                         "in dcompute modules.");
         return;

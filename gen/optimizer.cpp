@@ -64,6 +64,7 @@
 #include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 #include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizerOptions.h"
 #include "llvm/Transforms/Instrumentation/InstrProfiling.h"
 #include "llvm/Transforms/Instrumentation/PGOInstrumentation.h"
@@ -599,11 +600,17 @@ bool ldc_optimize_module(llvm::Module *M, llvm::TargetMachine *TM) {
   if (getComputeTargetType(M) == ComputeBackend::SPIRV) {
     if (llvm::Triple(M->getTargetTriple()).getOS() == llvm::Triple::OSType::Vulkan ||
         llvm::Triple(M->getTargetTriple()).str().find("vulkan") != std::string::npos) {
+      // The Vulkan flavour goes through LLVM's own SPIR-V backend, which
+      // takes optimised IR like any other target. Below -O1 the floor is
+      // still the always-inliner plus SROA/mem2reg: a shader entry point's
+      // helper (the `@fragment` function) must fold into it so that no
+      // opaque image/sampler handle ends up in a Function-storage variable,
+      // which Vulkan forbids.
       llvm::LoopAnalysisManager LAM;
       llvm::FunctionAnalysisManager FAM;
       llvm::CGSCCAnalysisManager CGAM;
       llvm::ModuleAnalysisManager MAM;
-      llvm::PassBuilder PB;
+      llvm::PassBuilder PB(TM);
       PB.registerModuleAnalyses(MAM);
       PB.registerCGSCCAnalyses(CGAM);
       PB.registerFunctionAnalyses(FAM);
@@ -611,10 +618,18 @@ bool ldc_optimize_module(llvm::Module *M, llvm::TargetMachine *TM) {
       PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
       llvm::ModulePassManager MPM;
-      llvm::FunctionPassManager FPM;
-      FPM.addPass(llvm::SROAPass(llvm::SROAOptions(llvm::SROAOptions::ModifyCFG)));
-      FPM.addPass(llvm::PromotePass());
-      MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+      if (optLevel() >= 1) {
+        MPM = PB.buildPerModuleDefaultPipeline(
+            optLevel() >= 3 ? llvm::OptimizationLevel::O3
+            : optLevel() == 2 ? llvm::OptimizationLevel::O2
+                              : llvm::OptimizationLevel::O1);
+      } else {
+        MPM.addPass(llvm::AlwaysInlinerPass());
+        llvm::FunctionPassManager FPM;
+        FPM.addPass(llvm::SROAPass(llvm::SROAOptions(llvm::SROAOptions::ModifyCFG)));
+        FPM.addPass(llvm::PromotePass());
+        MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+      }
       MPM.run(*M, MAM);
       return true;
     }
