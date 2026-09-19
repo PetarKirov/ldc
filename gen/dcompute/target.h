@@ -62,6 +62,9 @@ public:
   /// marked `@ldc.dcompute.fragment`. Only the Vulkan target supports it.
   virtual void addShaderEntry(FuncDeclaration *df, llvm::Function *llf,
                               StructLiteralExp *shaderAttr);
+  /// The handle of the shader's shared sampler (`ldc.dcompute.__spirv_shared_sampler`),
+  /// built at the current insertion point. Only the Vulkan target has one.
+  virtual llvm::Value *buildSharedSamplerHandle(Loc loc);
 };
 
 #if LDC_LLVM_SUPPORTED_TARGET_NVPTX
