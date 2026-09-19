@@ -41,6 +41,6 @@ struct DcomputePointer {
 };
 std::optional<DcomputePointer> toDcomputePointer(StructDeclaration *sd);
 
-/// The opaque SPIR-V target type `sd` stands for (`ldc.dcompute.Image2D` ->
+/// The opaque SPIR-V target type `sd` stands for (`ldc.dcompute.Sampler2D` ->
 /// `spirv.Image`, `ldc.dcompute.Sampler` -> `spirv.Sampler`), or nullptr.
 llvm::Type *toDcomputeOpaqueHandleType(StructDeclaration *sd);

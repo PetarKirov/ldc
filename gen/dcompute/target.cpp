@@ -35,6 +35,13 @@ void DComputeTarget::addShaderEntry(FuncDeclaration *fd, llvm::Function *,
   fatal();
 }
 
+llvm::Value *DComputeTarget::buildSharedSamplerHandle(Loc loc) {
+  error(loc, "`__spirv_shared_sampler` is only supported by the Vulkan "
+             "DCompute target");
+  fatal();
+  return nullptr;
+}
+
 void DComputeTarget::doCodeGen(Module *m) {
   // Reset any generated type info for dcompute types.
   // The ll types get generated when the host code gets

@@ -17,6 +17,7 @@
 #include "dmd/template.h"
 #include "gen/abi/abi.h"
 #include "gen/arrays.h"
+#include "gen/dcompute/druntime.h"
 #include "gen/classes.h"
 #include "gen/dvalue.h"
 #include "gen/funcgenstate.h"
@@ -258,6 +259,13 @@ static LLType *getAtomicType(LLType *type) {
 
 bool DtoLowerMagicIntrinsic(IRState *p, FuncDeclaration *fndecl, CallExp *e,
                             DValue *&result) {
+  // ldc.dcompute.__spirv_shared_sampler(): the device's one sampler handle
+  if (p->dcomputetarget && fndecl->ident == Id::dcSharedSampler &&
+      isFromLDC_DCompute(fndecl)) {
+    result = new DImValue(e->type, p->dcomputetarget->buildSharedSamplerHandle(e->loc));
+    return true;
+  }
+
   // va_start instruction
   if (fndecl->llvmInternal == LLVMva_start) {
     if (e->arguments->length < 1 || e->arguments->length > 2) {
