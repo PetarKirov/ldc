@@ -206,19 +206,23 @@ static if (__traits(compiles, { __vector(float[2]) a; __vector(float[4]) b; __ve
     {
         Image2D image;
         Sampler sampler;
+    }
 
-        /// Samples the image at normalised `uv`: GLSL's `texture(s, uv)`.
-        ///
-        /// A `this`-template on purpose: the body names a SPIR-V intrinsic
-        /// whose signature only holds on the device, so it must never be
-        /// compiled into druntime for the host — a template is instantiated
-        /// where it is used, which is only ever device code.
-        __vector(float[4]) sample(this This)(__vector(float[2]) uv) const
-            @safe pure nothrow @nogc
-        {
-            __vector(int[2]) noOffset = 0;
-            return __spirv_resource_sample_2d(image, sampler, uv, noOffset);
-        }
+    /++
+     + Samples the image at normalised `uv`: GLSL's `texture(s, uv)`.
+     +
+     + A free function taking the pair $(I by value), not a method: a method's
+     + `this` is a pointer, which puts the pair in a Function-storage variable,
+     + and Vulkan forbids an opaque handle to live in one. By value it is an
+     + aggregate the backend unpacks into the two handles the intrinsic wants.
+     + A template so that druntime's own host build never compiles it — the
+     + intrinsic's signature only holds on the device.
+     +/
+    __vector(float[4]) sample(S : Sampler2D)(S s, __vector(float[2]) uv)
+        @safe pure nothrow @nogc
+    {
+        __vector(int[2]) noOffset = 0;
+        return __spirv_resource_sample_2d(s.image, s.sampler, uv, noOffset);
     }
 
     // A texture read: pure in the only sense that matters to a shader (the
