@@ -1679,6 +1679,13 @@ static bool isExplicitlyOutOfBinary(Dsymbol *sym) {
 }
 
 bool defineOnDeclare(Dsymbol *sym, bool isFunction) {
+  // A device module is self-contained -- there is no linker to find an
+  // instance emitted elsewhere, and the frontend may well have handed one
+  // to a host module -- so every template instance it references is defined
+  // right where it is first declared, as -linkonce-templates does.
+  if (gIR && gIR->dcomputetarget)
+    return sym->isInstantiated();
+
   // -linkonce-templates: all instantiated symbols
   if (global.params.linkonceTemplates != LinkonceTemplates::no)
     return sym->isInstantiated();
