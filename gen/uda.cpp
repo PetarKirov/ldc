@@ -696,6 +696,31 @@ StructLiteralExp *getKernelAttr(Dsymbol *sym) {
   return sle;
 }
 
+/// Returns whether `sym` has the `@ldc.dcompute._shader()` UDA applied.
+StructLiteralExp *getShaderAttr(Dsymbol *sym) {
+  auto sle = getMagicAttribute(sym, Id::udaShader, Id::dcompute);
+  if (!sle)
+    return nullptr;
+
+  checkStructElems(sle, {Type::tint32});
+
+  if (!sym->isFuncDeclaration() ||
+      hasComputeAttr(sym->getModule()) == DComputeCompileFor::hostOnly) {
+    error(sym->loc, "`@ldc.dcompute.fragment` can only be applied to functions"
+                    " in modules marked `@ldc.dcompute.compute`");
+  }
+
+  return sle;
+}
+
+bool hasShaderInputUDA(Dsymbol *sym) {
+  return getMagicAttribute(sym, Id::udaShaderInput, Id::dcompute) != nullptr;
+}
+
+bool hasShaderUniformUDA(Dsymbol *sym) {
+  return getMagicAttribute(sym, Id::udaShaderUniform, Id::dcompute) != nullptr;
+}
+
 /// Check whether `fd` has the `@ldc.attributes.noSplitStack` UDA applied.
 bool hasNoSplitStackUDA(FuncDeclaration *fd) {
   auto sle = getMagicAttribute(fd, Id::udaNoSplitStack, Id::attributes);

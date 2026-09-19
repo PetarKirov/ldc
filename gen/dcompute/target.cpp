@@ -28,6 +28,13 @@
 #include <algorithm>
 
 
+void DComputeTarget::addShaderEntry(FuncDeclaration *fd, llvm::Function *,
+                                    StructLiteralExp *) {
+  error(fd->loc, "`@ldc.dcompute.fragment` shader entry points are only "
+                 "supported by the Vulkan DCompute target");
+  fatal();
+}
+
 void DComputeTarget::doCodeGen(Module *m) {
   // Reset any generated type info for dcompute types.
   // The ll types get generated when the host code gets

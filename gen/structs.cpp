@@ -16,6 +16,7 @@
 #include "dmd/module.h"
 #include "dmd/mtype.h"
 #include "gen/arrays.h"
+#include "gen/dcompute/druntime.h"
 #include "gen/dvalue.h"
 #include "gen/functions.h"
 #include "gen/irstate.h"
@@ -99,11 +100,22 @@ LLValue *DtoStructEquals(EXP op, DValue *lhs, DValue *rhs) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Whether `dty` is a `ldc.dcompute` opaque resource handle on the device: a
+/// struct to the frontend, a scalar target extension type to the backend, so
+/// the padding-aware field walks below must treat it as one value.
+static bool isOpaqueHandleStruct(Type *dty) {
+  if (!gIR->dcomputetarget || dty->ty != TY::Tstruct)
+    return false;
+  return toDcomputeOpaqueHandleType(static_cast<TypeStruct *>(dty)->sym) != nullptr;
+}
+
 /// Return the type returned by DtoUnpaddedStruct called on a value of the
 /// specified type.
 /// Union types will get expanded into a struct, with a type for each member.
 LLType *DtoUnpaddedStructType(Type *dty) {
   assert(dty->ty == TY::Tstruct);
+  if (isOpaqueHandleStruct(dty))
+    return DtoType(dty);
 
   typedef llvm::DenseMap<Type *, llvm::StructType *> CacheT;
   static llvm::ManagedStatic<CacheT> cache;
@@ -120,7 +132,7 @@ LLType *DtoUnpaddedStructType(Type *dty) {
 
   for (unsigned i = 0; i < fields.length; i++) {
     LLType *fty;
-    if (fields[i]->type->ty == TY::Tstruct) {
+    if (fields[i]->type->ty == TY::Tstruct && !isOpaqueHandleStruct(fields[i]->type)) {
       // Nested structs are the only members that can contain padding
       fty = DtoUnpaddedStructType(fields[i]->type);
     } else {
@@ -139,6 +151,8 @@ LLType *DtoUnpaddedStructType(Type *dty) {
 ///       first-class struct value.
 LLValue *DtoUnpaddedStruct(Type *dty, LLValue *v) {
   assert(dty->ty == TY::Tstruct);
+  if (isOpaqueHandleStruct(dty))
+    return DtoLoad(DtoType(dty), v);
   TypeStruct *sty = static_cast<TypeStruct *>(dty);
   VarDeclarations &fields = sty->sym->fields;
 
@@ -147,7 +161,7 @@ LLValue *DtoUnpaddedStruct(Type *dty, LLValue *v) {
   for (unsigned i = 0; i < fields.length; i++) {
     LLValue *fieldptr = DtoLVal(DtoIndexAggregate(v, sty->sym, fields[i]));
     LLValue *fieldval;
-    if (fields[i]->type->ty == TY::Tstruct) {
+    if (fields[i]->type->ty == TY::Tstruct && !isOpaqueHandleStruct(fields[i]->type)) {
       // Nested structs are the only members that can contain padding
       fieldval = DtoUnpaddedStruct(fields[i]->type, fieldptr);
     } else {
@@ -162,13 +176,17 @@ LLValue *DtoUnpaddedStruct(Type *dty, LLValue *v) {
 /// Undo the transformation performed by DtoUnpaddedStruct, writing to lval.
 void DtoPaddedStruct(Type *dty, LLValue *v, LLValue *lval) {
   assert(dty->ty == TY::Tstruct);
+  if (isOpaqueHandleStruct(dty)) {
+    DtoStore(v, lval);
+    return;
+  }
   TypeStruct *sty = static_cast<TypeStruct *>(dty);
   VarDeclarations &fields = sty->sym->fields;
 
   for (unsigned i = 0; i < fields.length; i++) {
     LLValue *fieldptr = DtoLVal(DtoIndexAggregate(lval, sty->sym, fields[i]));
     LLValue *fieldval = DtoExtractValue(v, i);
-    if (fields[i]->type->ty == TY::Tstruct) {
+    if (fields[i]->type->ty == TY::Tstruct && !isOpaqueHandleStruct(fields[i]->type)) {
       // Nested structs are the only members that can contain padding
       DtoPaddedStruct(fields[i]->type, fieldval, fieldptr);
     } else {
