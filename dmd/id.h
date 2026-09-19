@@ -43,6 +43,10 @@ struct Id
     static Identifier *ldc;
     static Identifier *dcompute;
     static Identifier *dcPointer;
+    static Identifier *intrinsics;
+    static Identifier *dcImage2D;
+    static Identifier *dcSampler;
+    static Identifier *dcSampler2D;
     static Identifier *object;
     static Identifier *core;
     static Identifier *internal;
@@ -98,6 +102,9 @@ struct Id
     static Identifier *udaLLVMAttr;
     static Identifier *udaLLVMFastMathFlag;
     static Identifier *udaKernel;
+    static Identifier *udaShader;
+    static Identifier *udaShaderInput;
+    static Identifier *udaShaderUniform;
     static Identifier *udaCompute;
     static Identifier *udaDynamicCompile;
     static Identifier *udaDynamicCompileConst;

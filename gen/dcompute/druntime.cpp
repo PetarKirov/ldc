@@ -42,6 +42,24 @@ bool isFromLDC_DCompute(Dsymbol *sym) {
 bool isFromLDC_OpenCL(Dsymbol *sym) {
   return isFromLDC_Mod(sym,Id::opencl);
 }
+bool isFromLDC_Intrinsics(Dsymbol *sym) {
+  return isFromLDC_Mod(sym,Id::intrinsics);
+}
+
+llvm::Type *toDcomputeOpaqueHandleType(StructDeclaration *sd) {
+  if (!isFromLDC_DCompute(sd))
+    return nullptr;
+  auto &ctx = gIR->context();
+  if (sd->ident == Id::dcImage2D) {
+    // OpTypeImage %float 2D depth=unknown arrayed=0 ms=0 sampled=1 Unknown
+    return llvm::TargetExtType::get(ctx, "spirv.Image",
+                                    {llvm::Type::getFloatTy(ctx)},
+                                    {1, 2, 0, 0, 1, 0});
+  }
+  if (sd->ident == Id::dcSampler)
+    return llvm::TargetExtType::get(ctx, "spirv.Sampler");
+  return nullptr;
+}
 
 std::optional<DcomputePointer> toDcomputePointer(StructDeclaration *sd) {
   if (sd->ident != Id::dcPointer || !isFromLDC_DCompute(sd)) {

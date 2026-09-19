@@ -590,6 +590,9 @@ immutable Msgtable[] msgtable =
     { "udaWeak", "_weak" },
     { "udaCompute", "compute" },
     { "udaKernel", "_kernel" },
+    { "udaShader", "_shader" },
+    { "udaShaderInput", "_input" },
+    { "udaShaderUniform", "_uniform" },
     { "udaDynamicCompile", "_dynamicCompile" },
     { "udaDynamicCompileConst", "_dynamicCompileConst" },
     { "udaDynamicCompileEmit", "_dynamicCompileEmit" },
@@ -601,6 +604,9 @@ immutable Msgtable[] msgtable =
     // IN_LLVM: DCompute specific types and functionss
     { "dcompute" },
     { "dcPointer", "Pointer" },
+    { "dcImage2D", "Image2D" },
+    { "dcSampler", "Sampler" },
+    { "dcSampler2D", "Sampler2D" },
     { "dcReflect", "__dcompute_reflect" },
     // dcompute array comparison/equality lowering hooks
     { "comparison" },
@@ -608,6 +614,7 @@ immutable Msgtable[] msgtable =
     { "dstrcmp" },
     { "RTInfoImpl" },
     { "opencl" },
+    { "intrinsics" },
 
     // IN_LLVM
     { "io" },
