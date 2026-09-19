@@ -50,7 +50,7 @@ llvm::Type *toDcomputeOpaqueHandleType(StructDeclaration *sd) {
   if (!isFromLDC_DCompute(sd))
     return nullptr;
   auto &ctx = gIR->context();
-  if (sd->ident == Id::dcImage2D) {
+  if (sd->ident == Id::dcSampler2D) {
     // OpTypeImage %float 2D depth=unknown arrayed=0 ms=0 sampled=1 Unknown
     return llvm::TargetExtType::get(ctx, "spirv.Image",
                                     {llvm::Type::getFloatTy(ctx)},

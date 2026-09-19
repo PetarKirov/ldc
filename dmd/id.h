@@ -44,9 +44,9 @@ struct Id
     static Identifier *dcompute;
     static Identifier *dcPointer;
     static Identifier *intrinsics;
-    static Identifier *dcImage2D;
     static Identifier *dcSampler;
     static Identifier *dcSampler2D;
+    static Identifier *dcSharedSampler;
     static Identifier *object;
     static Identifier *core;
     static Identifier *internal;

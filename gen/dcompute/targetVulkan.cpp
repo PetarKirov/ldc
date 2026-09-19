@@ -63,6 +63,13 @@ public:
       if (f.isDeclaration() || f.hasFnAttribute("hlsl.shader"))
         continue;
       f.setLinkage(llvm::GlobalValue::InternalLinkage);
+      // And every helper folds into its entry point, as a GLSL compiler
+      // would: a shader has no recursion, and a resource handle can only be
+      // consumed in the function that obtained it -- it cannot be passed as
+      // a function argument -- so a call boundary is never allowed to stand
+      // between a `Sampler2D` parameter and the sample that reads it.
+      f.removeFnAttr(llvm::Attribute::NoInline);
+      f.addFnAttr(llvm::Attribute::AlwaysInline);
     }
   }
 
@@ -268,6 +275,12 @@ public:
          _ir->getCachedStringLiteral(name, 0)});
   }
 
+  llvm::Value *buildSharedSamplerHandle(Loc) override {
+    llvm::IRBuilder<> &builder = *(_ir->ir.operator->());
+    auto *samplerTy = llvm::TargetExtType::get(ctx, "spirv.Sampler");
+    return buildResourceHandle(builder, samplerTy, /*binding=*/0, "sampler");
+  }
+
   void addShaderEntry(FuncDeclaration *fd, llvm::Function *llf,
                       StructLiteralExp *shaderAttr) override {
     const auto stage = toInteger((*shaderAttr->elements)[0]);
@@ -302,7 +315,7 @@ public:
     }
 
     unsigned nextLocation = 0;
-    unsigned nextBinding = 0;
+    unsigned nextImageBinding = 1;
     llvm::SmallVector<llvm::Value *, 8> args(nparams);
     for (size_t i = 0; i < nparams; i++) {
       VarDeclaration *vd = (*fd->parameters)[i];
@@ -319,21 +332,8 @@ public:
       } else if (hasShaderUniformUDA(vd)) {
         args[i] = builder.CreateLoad(pt, buildUniform(pt, name), name);
       } else if (sd && sd->ident == Id::dcSampler2D && isFromLDC_DCompute(sd)) {
-        auto *st = llvm::dyn_cast<llvm::StructType>(pt);
-        if (!st || st->getNumElements() != 2) {
-          error(vd->loc, "ICE: unexpected lowering of `Sampler2D`");
-          fatal();
-        }
-        const std::string imageName = name;
-        const std::string samplerName = std::string(name) + "_sampler";
-        auto *image = buildResourceHandle(builder, st->getElementType(0),
-                                          nextBinding++, imageName);
-        auto *sampler = buildResourceHandle(builder, st->getElementType(1),
-                                            nextBinding++, samplerName);
-        llvm::Value *pair = llvm::PoisonValue::get(st);
-        pair = builder.CreateInsertValue(pair, image, 0);
-        pair = builder.CreateInsertValue(pair, sampler, 1);
-        args[i] = pair;
+        // Binding 0 is the shared sampler; images take the bindings after it.
+        args[i] = buildResourceHandle(builder, pt, nextImageBinding++, name);
       } else {
         error(vd->loc,
               "`@fragment` parameter `%s` must be marked `@input` or "
