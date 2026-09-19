@@ -17,9 +17,11 @@
 #include "llvm/IR/PassManager.h"
 
 #if LLVM_VERSION_MAJOR >= 24
+// LLVM 24 split the mixin into Required/OptionalPassInfoMixin and made
+// `isRequired()` mandatory; LDC's passes are all skippable optimizations.
 namespace llvm {
 template <typename DerivedT>
-using PassInfoMixin = detail::PassInfoMixin<DerivedT>;
+using PassInfoMixin = OptionalPassInfoMixin<DerivedT>;
 }
 #endif
 
