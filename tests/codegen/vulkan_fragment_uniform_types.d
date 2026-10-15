@@ -19,6 +19,7 @@ alias int2 = __vector(int[2]);
 // CHECK-DAG: OpMemberName %Light 3 "cell"
 // CHECK-DAG: OpMemberName %Light 4 "weights"
 // CHECK-DAG: [[sint:%[a-zA-Z0-9_]+]] = OpTypeInt 32 1
+// CHECK-NOT: OpTypeInt 32 0
 // CHECK-DAG: [[sint2:%[a-zA-Z0-9_]+]] = OpTypeVector [[sint]] 2
 // CHECK-DAG: %Light = OpTypeStruct %float [[sint]] %v3float [[sint2]] %{{[a-zA-Z0-9_]+}}
 // CHECK-DAG: %n = OpVariable %{{[a-zA-Z0-9_]+}} UniformConstant

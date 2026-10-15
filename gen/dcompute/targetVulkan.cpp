@@ -59,6 +59,11 @@ public:
     _ir->module.setDataLayout(targetMachine->createDataLayout());
      
     _ir->dcomputetarget = this;
+
+    // D's plain integers are signed, and a shader's `int` must reach GLSL as
+    // `int`: ask the SPIR-V backend for signed integer types, since LLVM's
+    // integers carry no sign of their own.
+    _ir->module.addModuleFlag(llvm::Module::Error, "spirv.signed-integers", 1);
   }
 
   void addMetadata() override {
@@ -338,11 +343,12 @@ public:
   // - uniforms: those, `int` and vectors of `int`, and structs and static
   //   arrays of uniform types (ES 1.00 has no `uint`).
   //
-  // LLVM's integers carry no sign and its struct members no names, both of
-  // which the host binds by, so a uniform's SPIR-V type is not its D type's
-  // LLVM type: an `int` is an inline signed `OpTypeInt`, and a struct is a
-  // struct of such types whose members are named by `spirv.MemberNames`.
-  // `fromInterface` converts a loaded value back to the D type.
+  // The host binds a uniform struct's members by name, and LLVM struct members
+  // have none, so a uniform struct's SPIR-V type is its own: the fields'
+  // interface types in declaration order, without the padding or overlap the D
+  // struct's LLVM type may carry, and named by `spirv.MemberNames`.
+  // `fromInterface` converts a loaded value back to the D type. (Integers are
+  // signed module-wide, by the `spirv.signed-integers` flag.)
 
   enum class Crossing { varying, output, uniform };
 
@@ -398,36 +404,10 @@ public:
 
   llvm::DenseMap<StructDeclaration *, llvm::StructType *> interfaceStructs;
 
-  /// `spirv.Type` for an inline SPIR-V type: `params` are its operands,
-  /// `opcode` its SPIR-V opcode, sized and aligned like `like`.
-  llvm::Type *inlineSpirvType(llvm::ArrayRef<llvm::Type *> params,
-                              unsigned opcode, llvm::Type *like) {
-    const auto &dl = _ir->module.getDataLayout();
-    return llvm::TargetExtType::get(
-        ctx, "spirv.Type", params,
-        {opcode, static_cast<unsigned>(dl.getTypeAllocSize(like)),
-         static_cast<unsigned>(dl.getABITypeAlign(like).value())});
-  }
-
-  llvm::Type *literal(unsigned v) {
-    return llvm::TargetExtType::get(ctx, "spirv.Literal", {}, {v});
-  }
-
   /// The SPIR-V-facing type of an interface variable of D type `t`.
   llvm::Type *interfaceType(Type *t) {
     t = t->toBasetype();
     switch (t->ty) {
-    case TY::Tint32:
-      return inlineSpirvType({literal(32), literal(1)}, /*OpTypeInt*/ 21,
-                             getI32Type());
-    case TY::Tvector: {
-      auto *tv = static_cast<TypeVector *>(t);
-      if (tv->elementType()->ty != TY::Tint32)
-        return DtoType(t);
-      const auto n = toInteger(static_cast<TypeSArray *>(tv->basetype)->dim);
-      return inlineSpirvType({interfaceType(tv->elementType()), literal(n)},
-                             /*OpTypeVector*/ 23, DtoType(t));
-    }
     case TY::Tsarray:
       return llvm::ArrayType::get(
           interfaceType(t->nextOf()),
@@ -466,10 +446,6 @@ public:
     if (v->getType() == dty)
       return v;
     switch (t->ty) {
-    case TY::Tint32:
-    case TY::Tvector:
-      return buildIntrinsicCall(builder, "", "llvm.spv.bitcast",
-                                {dty, v->getType()}, {v});
     case TY::Tsarray: {
       llvm::Value *r = llvm::Constant::getNullValue(dty);
       const auto n = toInteger(static_cast<TypeSArray *>(t)->dim);
