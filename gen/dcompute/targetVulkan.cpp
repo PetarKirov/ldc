@@ -279,6 +279,7 @@ public:
   struct InterfaceUse {
     const char *kind; // "input", "uniform" or "image"
     int ordinal;      // the location or binding; -1 for a uniform
+    std::string type; // the D type, as written
     std::string entry;
   };
   llvm::StringMap<InterfaceUse> interfaceUses;
@@ -286,8 +287,9 @@ public:
   void recordInterfaceUse(VarDeclaration *vd, const char *entry,
                           const char *kind, int ordinal) {
     const char *name = vd->ident->toChars();
-    auto inserted =
-        interfaceUses.try_emplace(name, InterfaceUse{kind, ordinal, entry});
+    const char *type = vd->type->toBasetype()->toChars();
+    auto inserted = interfaceUses.try_emplace(
+        name, InterfaceUse{kind, ordinal, type, entry});
     if (inserted.second)
       return;
     const InterfaceUse &first = inserted.first->second;
@@ -297,6 +299,14 @@ public:
             "an interface name is one variable across the module",
             name, article(kind), kind, entry, article(first.kind), first.kind,
             first.entry.c_str());
+      fatal();
+    }
+    if (first.type != type) {
+      error(vd->loc,
+            "shader %s `%s` is `%s` in `%s` but `%s` in `%s`; an interface "
+            "name is one variable across the module, so every entry point "
+            "must give it the same type",
+            kind, name, type, entry, first.type.c_str(), first.entry.c_str());
       fatal();
     }
     if (first.ordinal != ordinal) {
