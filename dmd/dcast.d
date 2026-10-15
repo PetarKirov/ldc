@@ -2196,7 +2196,9 @@ Expression castTo(Expression e, Scope* sc, Type t, Type att = null)
             if (t1b.ty == Tsarray)
             {
                 // Casting static array to vector with same size, e.g. `cast(int4) int[4]`
-                if (t1b.size(e.loc) != tob.size(e.loc))
+                // IN_LLVM: compare with the vector's elements, not its padded size
+                // (a `__vector(float[3])` occupies 16 bytes and holds 12).
+                if (t1b.size(e.loc) != tob.isTypeVector().basetype.size(e.loc))
                     return fail();
                 return new VectorExp(e.loc, e, tob).expressionSemantic(sc);
             }
@@ -2212,7 +2214,7 @@ Expression castTo(Expression e, Scope* sc, Type t, Type att = null)
             // T[n] <-- __vector(U[m])
             if (tob.ty == Tsarray)
             {
-                if (t1b.size(e.loc) == tob.size(e.loc))
+                if (t1b.isTypeVector().basetype.size(e.loc) == tob.size(e.loc))
                     return ok();
             }
             return fail();
