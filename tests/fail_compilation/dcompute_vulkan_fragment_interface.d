@@ -7,6 +7,7 @@
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/location.d 2>&1 | FileCheck %t/location.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/binding.d 2>&1 | FileCheck %t/binding.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/kind.d 2>&1 | FileCheck %t/kind.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/type.d 2>&1 | FileCheck %t/type.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/intinput.d 2>&1 | FileCheck %t/intinput.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/uint.d 2>&1 | FileCheck %t/uint.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/arrayinput.d 2>&1 | FileCheck %t/arrayinput.d
@@ -37,6 +38,15 @@ alias float4 = __vector(float[4]);
 @fragment float4 first(@uniform float u) { return float4(u); }
 // CHECK: kind.d([[@LINE+1]]): Error: shader interface name `u` is an input in `second` but a uniform in `first`
 @fragment float4 second(@input float u) { return float4(u); }
+
+//--- type.d
+@compute(CompileFor.deviceOnly) module type;
+import ldc.dcompute;
+alias float2 = __vector(float[2]);
+alias float4 = __vector(float[4]);
+@fragment float4 first(@uniform float scale) { return float4(scale); }
+// CHECK: type.d([[@LINE+1]]): Error: shader uniform `scale` is `__vector(float[2])` in `second` but `float` in `first`
+@fragment float4 second(@uniform float2 scale) { return float4(scale[0]); }
 
 //--- intinput.d
 @compute(CompileFor.deviceOnly) module intinput;
