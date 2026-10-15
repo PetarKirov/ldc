@@ -4,7 +4,7 @@
 
 // REQUIRES: target_SPIRV && atleast_llvm23
 // RUN: %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-file-prefix=vulkan_uniform_types -output-o %s
-// RUN: spirv-dis vulkan_uniform_types_vulkan130_64.spv -o - | FileCheck %s
+// RUN: spirv-dis vulkan_uniform_types_vulkan130_64.spv -o - | FileCheck %s --implicit-check-not="OpTypeInt 32 0"
 
 @compute(CompileFor.deviceOnly) module vulkan_fragment_uniform_types;
 import ldc.dcompute;
@@ -19,7 +19,6 @@ alias int2 = __vector(int[2]);
 // CHECK-DAG: OpMemberName %Light 3 "cell"
 // CHECK-DAG: OpMemberName %Light 4 "weights"
 // CHECK-DAG: [[sint:%[a-zA-Z0-9_]+]] = OpTypeInt 32 1
-// CHECK-NOT: OpTypeInt 32 0
 // CHECK-DAG: [[sint2:%[a-zA-Z0-9_]+]] = OpTypeVector [[sint]] 2
 // CHECK-DAG: %Light = OpTypeStruct %float [[sint]] %v3float [[sint2]] %{{[a-zA-Z0-9_]+}}
 // CHECK-DAG: %n = OpVariable %{{[a-zA-Z0-9_]+}} UniformConstant
@@ -34,6 +33,10 @@ struct Light
     int2 cell;
     float[3] weights;
 }
+
+// `in` and plain parameters name one interface type: the uniform `n` of both
+// entries is one variable.
+@fragment float4 dim(@uniform in int n) { return float4(cast(float) n); }
 
 @fragment float4 tint(@input float3 colour, @uniform int n, @uniform Light light)
 {

@@ -284,7 +284,7 @@ public:
   struct InterfaceUse {
     const char *kind; // "input", "uniform" or "image"
     int ordinal;      // the location or binding; -1 for a uniform
-    std::string type; // the D type, as written
+    std::string type; // the D type, unqualified and fully qualified by module
     std::string entry;
   };
   llvm::StringMap<InterfaceUse> interfaceUses;
@@ -292,7 +292,10 @@ public:
   void recordInterfaceUse(VarDeclaration *vd, const char *entry,
                           const char *kind, int ordinal) {
     const char *name = vd->ident->toChars();
-    const char *type = vd->type->toBasetype()->toChars();
+    // `in float` and `float` are one interface type; two structs of one name
+    // from two modules are not.
+    const char *type =
+        unSharedOf(mutableOf(vd->type->toBasetype()))->toPrettyChars(true);
     auto inserted = interfaceUses.try_emplace(
         name, InterfaceUse{kind, ordinal, type, entry});
     if (inserted.second)
