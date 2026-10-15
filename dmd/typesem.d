@@ -3036,7 +3036,24 @@ uinteger_t size(Type t, Loc loc)
         default:            return t.isTypeBasic() ? visitBasic(t.isTypeBasic()) : visitType(t);
         case Ttraits:
         case Terror:        return SIZE_INVALID;
-        case Tvector:       return t.isTypeVector().basetype.size();
+        case Tvector:
+        {
+            const sz = t.isTypeVector().basetype.size();
+            version (IN_LLVM)
+            {
+                // A vector occupies what LLVM allocates for it: its size
+                // rounded up to its (power-of-two) alignment, so a 12-byte
+                // `__vector(float[3])` takes 16, in a struct, an array and
+                // `.sizeof` alike. Otherwise the frontend lays out a struct
+                // holding one in less space than its IR type needs.
+                if (sz == SIZE_INVALID)
+                    return sz;
+                const a = t.alignsize();
+                return (sz + a - 1) / a * a;
+            }
+            else
+                return sz;
+        }
         case Tsarray:       return visitSArray(t.isTypeSArray());
         case Tdelegate:
         case Tarray:        return target.ptrsize * 2;
@@ -6401,7 +6418,10 @@ Expression dotExp(Type mt, Scope* sc, Expression e, Identifier ident, DotExpFlag
             e = e.expressionSemantic(sc);
             return e;
         }
-        if (ident == Id._init || ident == Id.offsetof || ident == Id.stringof || ident == Id.__xalignof)
+        // IN_LLVM: `sizeof` too, which is the vector's own (padded) size, not
+        // its elements' (a `__vector(float[3])` occupies 16 bytes).
+        if (ident == Id._init || ident == Id.offsetof || ident == Id.stringof || ident == Id.__xalignof ||
+            ident == Id.__sizeof)
         {
             // init should return a new VectorExp
             // https://issues.dlang.org/show_bug.cgi?id=12776
