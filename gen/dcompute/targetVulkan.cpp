@@ -26,6 +26,13 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/IR/IntrinsicsSPIRV.h"
+#include "llvm/ADT/StringMap.h"
+#include "dmd/mtype.h"
+#include "dmd/aggregate.h"
+#include "gen/tollvm.h"
+#include "ir/irtype.h"
+#include "ir/irtypeaggr.h"
+#include "llvm/ADT/DenseMap.h"
 #include <cstring>
 #include <string>
 
@@ -264,6 +271,242 @@ public:
     return gv;
   }
 
+  /// What an interface name is across the module. An entry point's interface
+  /// variable is shared by name with every other entry point in the module
+  /// (see `buildInterfaceVariable`), so its kind and its location or binding
+  /// are the module's, not the entry point's: every entry naming it must
+  /// agree, or one of them would read through a decoration it did not ask for.
+  struct InterfaceUse {
+    const char *kind; // "input", "uniform" or "image"
+    int ordinal;      // the location or binding; -1 for a uniform
+    std::string entry;
+  };
+  llvm::StringMap<InterfaceUse> interfaceUses;
+
+  void recordInterfaceUse(VarDeclaration *vd, const char *entry,
+                          const char *kind, int ordinal) {
+    const char *name = vd->ident->toChars();
+    auto inserted =
+        interfaceUses.try_emplace(name, InterfaceUse{kind, ordinal, entry});
+    if (inserted.second)
+      return;
+    const InterfaceUse &first = inserted.first->second;
+    if (std::strcmp(first.kind, kind) != 0) {
+      error(vd->loc,
+            "shader interface name `%s` is %s %s in `%s` but %s %s in `%s`; "
+            "an interface name is one variable across the module",
+            name, article(kind), kind, entry, article(first.kind), first.kind,
+            first.entry.c_str());
+      fatal();
+    }
+    if (first.ordinal != ordinal) {
+      const char *what = std::strcmp(kind, "image") == 0 ? "binding" : "location";
+      error(vd->loc,
+            "shader %s `%s` is at %s %d in `%s` but %s %d in `%s`; an "
+            "interface name is one variable across the module, so every entry "
+            "point must give it the same %s",
+            kind, name, what, ordinal, entry, what, first.ordinal,
+            first.entry.c_str(), what);
+      fatal();
+    }
+  }
+
+  static const char *article(const char *kind) {
+    return kind[0] == 'i' ? "an" : "a";
+  }
+
+  // ---- interface types ----------------------------------------------------
+  //
+  // What crosses a shader's interface is what GLSL can declare there, in a
+  // form both GLSL dialects the build step emits accept (GLSL 3.30 and GLSL
+  // ES 1.00):
+  //
+  // - inputs: `float` and vectors of two to four `float`s (ES 1.00 has no
+  //   integer varyings, and GLSL 3.30 needs them `flat`);
+  // - the output: a vector of four `float`s (ES 1.00 writes `gl_FragData[0]`,
+  //   which is a `vec4`);
+  // - uniforms: those, `int` and vectors of `int`, and structs and static
+  //   arrays of uniform types (ES 1.00 has no `uint`).
+  //
+  // LLVM's integers carry no sign and its struct members no names, both of
+  // which the host binds by, so a uniform's SPIR-V type is not its D type's
+  // LLVM type: an `int` is an inline signed `OpTypeInt`, and a struct is a
+  // struct of such types whose members are named by `spirv.MemberNames`.
+  // `fromInterface` converts a loaded value back to the D type.
+
+  enum class Crossing { varying, output, uniform };
+
+  /// Why `t` cannot cross as `crossing`, or null if it can.
+  static const char *refusal(Type *t, Crossing crossing) {
+    t = t->toBasetype();
+    if (crossing == Crossing::output) {
+      auto *tv = t->ty == TY::Tvector ? static_cast<TypeVector *>(t) : nullptr;
+      return tv && tv->elementType()->ty == TY::Tfloat32 &&
+                     toInteger(static_cast<TypeSArray *>(tv->basetype)->dim) == 4
+                 ? nullptr
+                 : "the output is a vector of four `float`s, as GLSL ES 1.00's "
+                   "`gl_FragData[0]` is";
+    }
+    switch (t->ty) {
+    case TY::Tfloat32:
+      return nullptr;
+    case TY::Tint32:
+      return crossing == Crossing::uniform
+                 ? nullptr
+                 : "an integer cannot be interpolated; pass it as a `@uniform`";
+    case TY::Tvector: {
+      auto *tv = static_cast<TypeVector *>(t);
+      const auto n = toInteger(static_cast<TypeSArray *>(tv->basetype)->dim);
+      if (n < 2 || n > 4)
+        return "a vector must have two to four components";
+      return refusal(tv->elementType(), crossing);
+    }
+    case TY::Tsarray:
+      if (crossing != Crossing::uniform)
+        return "only a `@uniform` can be an array";
+      return refusal(t->nextOf(), crossing);
+    case TY::Tstruct: {
+      if (crossing != Crossing::uniform)
+        return "only a `@uniform` can be a struct";
+      StructDeclaration *sd = static_cast<TypeStruct *>(t)->sym;
+      if (sd->fields.length == 0)
+        return "a struct must have fields";
+      for (VarDeclaration *field : sd->fields)
+        if (const char *why = refusal(field->type, crossing))
+          return why;
+      return nullptr;
+    }
+    case TY::Tuns32:
+      return "GLSL ES 1.00 has no unsigned integers";
+    default:
+      return crossing == Crossing::uniform
+                 ? "a uniform is a `float`, an `int`, a vector of them, or a "
+                   "struct or static array of uniform types"
+                 : "an input or output is a `float` or a vector of them";
+    }
+  }
+
+  llvm::DenseMap<StructDeclaration *, llvm::StructType *> interfaceStructs;
+
+  /// `spirv.Type` for an inline SPIR-V type: `params` are its operands,
+  /// `opcode` its SPIR-V opcode, sized and aligned like `like`.
+  llvm::Type *inlineSpirvType(llvm::ArrayRef<llvm::Type *> params,
+                              unsigned opcode, llvm::Type *like) {
+    const auto &dl = _ir->module.getDataLayout();
+    return llvm::TargetExtType::get(
+        ctx, "spirv.Type", params,
+        {opcode, static_cast<unsigned>(dl.getTypeAllocSize(like)),
+         static_cast<unsigned>(dl.getABITypeAlign(like).value())});
+  }
+
+  llvm::Type *literal(unsigned v) {
+    return llvm::TargetExtType::get(ctx, "spirv.Literal", {}, {v});
+  }
+
+  /// The SPIR-V-facing type of an interface variable of D type `t`.
+  llvm::Type *interfaceType(Type *t) {
+    t = t->toBasetype();
+    switch (t->ty) {
+    case TY::Tint32:
+      return inlineSpirvType({literal(32), literal(1)}, /*OpTypeInt*/ 21,
+                             getI32Type());
+    case TY::Tvector: {
+      auto *tv = static_cast<TypeVector *>(t);
+      if (tv->elementType()->ty != TY::Tint32)
+        return DtoType(t);
+      const auto n = toInteger(static_cast<TypeSArray *>(tv->basetype)->dim);
+      return inlineSpirvType({interfaceType(tv->elementType()), literal(n)},
+                             /*OpTypeVector*/ 23, DtoType(t));
+    }
+    case TY::Tsarray:
+      return llvm::ArrayType::get(
+          interfaceType(t->nextOf()),
+          toInteger(static_cast<TypeSArray *>(t)->dim));
+    case TY::Tstruct:
+      return interfaceStruct(static_cast<TypeStruct *>(t)->sym);
+    default:
+      return DtoType(t);
+    }
+  }
+
+  /// A struct of the fields' interface types, in declaration order, named
+  /// after the D struct and with its members named after the fields.
+  llvm::StructType *interfaceStruct(StructDeclaration *sd) {
+    if (auto *known = interfaceStructs.lookup(sd))
+      return known;
+    llvm::SmallVector<llvm::Type *, 8> fields;
+    llvm::SmallVector<llvm::Metadata *, 8> names;
+    for (VarDeclaration *field : sd->fields)
+      fields.push_back(interfaceType(field->type));
+    auto *st = llvm::StructType::create(ctx, fields, sd->ident->toChars());
+    names.push_back(llvm::ConstantAsMetadata::get(llvm::PoisonValue::get(st)));
+    for (VarDeclaration *field : sd->fields)
+      names.push_back(llvm::MDString::get(ctx, field->ident->toChars()));
+    _ir->module.getOrInsertNamedMetadata("spirv.MemberNames")
+        ->addOperand(llvm::MDNode::get(ctx, names));
+    interfaceStructs[sd] = st;
+    return st;
+  }
+
+  /// `v`, loaded from an interface variable of D type `t`, as `t`'s value.
+  llvm::Value *fromInterface(llvm::IRBuilder<> &builder, llvm::Value *v,
+                             Type *t) {
+    t = t->toBasetype();
+    llvm::Type *dty = DtoType(t);
+    if (v->getType() == dty)
+      return v;
+    switch (t->ty) {
+    case TY::Tint32:
+    case TY::Tvector:
+      return buildIntrinsicCall(builder, "", "llvm.spv.bitcast",
+                                {dty, v->getType()}, {v});
+    case TY::Tsarray: {
+      llvm::Value *r = llvm::Constant::getNullValue(dty);
+      const auto n = toInteger(static_cast<TypeSArray *>(t)->dim);
+      for (unsigned i = 0; i < n; i++)
+        r = builder.CreateInsertValue(
+            r, fromInterface(builder, builder.CreateExtractValue(v, i),
+                             t->nextOf()),
+            i);
+      return r;
+    }
+    case TY::Tstruct: {
+      StructDeclaration *sd = static_cast<TypeStruct *>(t)->sym;
+      auto *aggr = getIrType(t)->isAggr();
+      llvm::Value *r = llvm::Constant::getNullValue(dty);
+      for (unsigned i = 0; i < sd->fields.length; i++) {
+        VarDeclaration *field = sd->fields[i];
+        bool isFieldIdx;
+        const unsigned index = aggr->getMemberLocation(field, isFieldIdx);
+        if (!isFieldIdx) {
+          error(field->loc,
+                "shader uniform struct `%s` has overlapping field `%s`",
+                sd->toChars(), field->toChars());
+          fatal();
+        }
+        r = builder.CreateInsertValue(
+            r, fromInterface(builder, builder.CreateExtractValue(v, i),
+                             field->type),
+            index);
+      }
+      return r;
+    }
+    default:
+      llvm_unreachable("an interface type that needs no conversion");
+    }
+  }
+
+  /// The argument a parameter of IR type `pt` receives for `value`: the value
+  /// itself, or, for an aggregate the ABI passes by reference, a copy of it.
+  llvm::Value *asArgument(llvm::IRBuilder<> &builder, llvm::Value *value,
+                          llvm::Type *pt) {
+    if (!pt->isPointerTy() || value->getType()->isPointerTy())
+      return value;
+    auto *slot = builder.CreateAlloca(value->getType());
+    builder.CreateStore(value, slot);
+    return slot;
+  }
+
   /// `llvm.spv.resource.handlefrombinding` for one descriptor.
   llvm::Value *buildResourceHandle(llvm::IRBuilder<> &builder, llvm::Type *handleTy,
                                    unsigned binding, const std::string &name) {
@@ -314,6 +557,16 @@ public:
       fatal();
     }
 
+    const char *entry = fd->ident->toChars();
+    Type *ret = fd->type->nextOf()->toBasetype();
+    if (ret->ty != TY::Tvoid) {
+      if (const char *why = refusal(ret, Crossing::output)) {
+        error(fd->loc, "`@fragment` function `%s` cannot return `%s`: %s",
+              entry, ret->toChars(), why);
+        fatal();
+      }
+    }
+
     unsigned nextLocation = 0;
     unsigned nextImageBinding = 1;
     llvm::SmallVector<llvm::Value *, 8> args(nparams);
@@ -324,15 +577,31 @@ public:
       Type *dty = vd->type->toBasetype();
       StructDeclaration *sd =
           dty->ty == TY::Tstruct ? static_cast<TypeStruct *>(dty)->sym : nullptr;
+      const bool isInput = hasShaderInputUDA(vd);
+      const bool isUniform = hasShaderUniformUDA(vd);
+      if (isInput || isUniform) {
+        const auto crossing = isInput ? Crossing::varying : Crossing::uniform;
+        if (const char *why = refusal(dty, crossing)) {
+          error(vd->loc, "`@fragment` parameter `%s` cannot be `%s`: %s", name,
+                vd->type->toChars(), why);
+          fatal();
+        }
+      }
 
-      if (hasShaderInputUDA(vd)) {
-        auto *gv = buildInterfaceVariable(pt, /*Input*/ 7, /*isConstant=*/true,
+      if (isInput) {
+        recordInterfaceUse(vd, entry, "input", nextLocation);
+        llvm::Type *it = DtoType(dty);
+        auto *gv = buildInterfaceVariable(it, /*Input*/ 7, /*isConstant=*/true,
                                           name, nextLocation++);
-        args[i] = builder.CreateLoad(pt, gv, name);
-      } else if (hasShaderUniformUDA(vd)) {
-        args[i] = builder.CreateLoad(pt, buildUniform(pt, name), name);
+        args[i] = builder.CreateLoad(it, gv, name);
+      } else if (isUniform) {
+        recordInterfaceUse(vd, entry, "uniform", -1);
+        llvm::Type *it = interfaceType(dty);
+        llvm::Value *v = builder.CreateLoad(it, buildUniform(it, name), name);
+        args[i] = asArgument(builder, fromInterface(builder, v, dty), pt);
       } else if (sd && sd->ident == Id::dcSampler2D && isFromLDC_DCompute(sd)) {
         // Binding 0 is the shared sampler; images take the bindings after it.
+        recordInterfaceUse(vd, entry, "image", nextImageBinding);
         args[i] = buildResourceHandle(builder, pt, nextImageBinding++, name);
       } else {
         error(vd->loc,
