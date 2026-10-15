@@ -8,6 +8,7 @@
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/binding.d 2>&1 | FileCheck %t/binding.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/kind.d 2>&1 | FileCheck %t/kind.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/type.d 2>&1 | FileCheck %t/type.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/samename.d %t/lighta.d %t/lightb.d 2>&1 | FileCheck %t/samename.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/intinput.d 2>&1 | FileCheck %t/intinput.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/uint.d 2>&1 | FileCheck %t/uint.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/arrayinput.d 2>&1 | FileCheck %t/arrayinput.d
@@ -47,6 +48,25 @@ alias float4 = __vector(float[4]);
 @fragment float4 first(@uniform float scale) { return float4(scale); }
 // CHECK: type.d([[@LINE+1]]): Error: shader uniform `scale` is `__vector(float[2])` in `second` but `float` in `first`
 @fragment float4 second(@uniform float2 scale) { return float4(scale[0]); }
+
+//--- samename.d
+@compute(CompileFor.deviceOnly) module samename;
+import ldc.dcompute;
+static import lighta, lightb;
+alias float4 = __vector(float[4]);
+@fragment float4 first(@uniform lighta.Light light) { return float4(light.gain); }
+// CHECK: samename.d([[@LINE+1]]): Error: shader uniform `light` is `lightb.Light` in `second` but `lighta.Light` in `first`
+@fragment float4 second(@uniform lightb.Light light) { return float4(light.gain); }
+
+//--- lighta.d
+@compute(CompileFor.hostAndDevice) module lighta;
+import ldc.dcompute;
+struct Light { float gain; }
+
+//--- lightb.d
+@compute(CompileFor.hostAndDevice) module lightb;
+import ldc.dcompute;
+struct Light { float gain; float bias; }
 
 //--- intinput.d
 @compute(CompileFor.deviceOnly) module intinput;
