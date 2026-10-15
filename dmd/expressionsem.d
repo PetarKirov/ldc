@@ -11028,7 +11028,7 @@ version (IN_LLVM)
         assert(tb.ty == Tvector);
         TypeVector tv = cast(TypeVector)tb;
         Type te = tv.elementType();
-        exp.dim = cast(int)(tv.size(exp.loc) / te.size(exp.loc));
+        exp.dim = cast(int)(tv.basetype.size(exp.loc) / te.size(exp.loc)); // IN_LLVM: elements, not the padded size
 
         bool checkElem(Expression elem)
         {
