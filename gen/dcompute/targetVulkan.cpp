@@ -27,6 +27,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/IR/IntrinsicsSPIRV.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "dmd/mtype.h"
 #include "dmd/aggregate.h"
 #include "gen/tollvm.h"
@@ -407,6 +408,10 @@ public:
 
   llvm::DenseMap<StructDeclaration *, llvm::StructType *> interfaceStructs;
 
+  /// The entry points so far, by name: a SPIR-V entry point's name is the
+  /// module's, and a second one would be renamed (`tint.1`), not linked.
+  llvm::StringMap<FuncDeclaration *> entryPoints;
+
   /// The SPIR-V-facing type of an interface variable of D type `t`.
   llvm::Type *interfaceType(Type *t) {
     t = t->toBasetype();
@@ -496,6 +501,108 @@ public:
     return slot;
   }
 
+  /// Why an interface name would not survive translation to GLSL, or null.
+  /// spirv-cross renames a name that GLSL reserves (a keyword or a built-in
+  /// function) and collapses a run of underscores, and GLSL reserves the
+  /// `gl_` prefix; a host binding by the D name would then find nothing. The
+  /// list is spirv-cross's own (`CompilerGLSL::replace_illegal_names`).
+  static const char *unreservedRefusal(llvm::StringRef name) {
+    static const llvm::StringSet<> reserved = {
+      "abs", "acos", "acosh", "all", "any", "asin", "asinh", "atan", "atanh", "atomicAdd",
+      "atomicCompSwap", "atomicCounter", "atomicCounterDecrement",
+      "atomicCounterIncrement", "atomicExchange", "atomicMax", "atomicMin",
+      "atomicOr", "atomicXor", "bitCount", "bitfieldExtract", "bitfieldInsert",
+      "bitfieldReverse", "ceil", "cos", "cosh", "cross", "degrees", "dFdx", "dFdxCoarse",
+      "dFdxFine", "dFdy", "dFdyCoarse", "dFdyFine", "distance", "dot",
+      "EmitStreamVertex", "EmitVertex", "EndPrimitive", "EndStreamPrimitive", "equal",
+      "exp", "exp2", "faceforward", "findLSB", "findMSB", "float16BitsToInt16",
+      "float16BitsToUint16", "floatBitsToInt", "floatBitsToUint", "floor", "fma",
+      "fract", "frexp", "fwidth", "fwidthCoarse", "fwidthFine", "greaterThan",
+      "greaterThanEqual", "groupMemoryBarrier", "imageAtomicAdd", "imageAtomicAnd",
+      "imageAtomicCompSwap", "imageAtomicExchange", "imageAtomicMax",
+      "imageAtomicMin", "imageAtomicOr", "imageAtomicXor", "imageLoad",
+      "imageSamples", "imageSize", "imageStore", "imulExtended", "int16BitsToFloat16",
+      "intBitsToFloat", "interpolateAtOffset", "interpolateAtCentroid",
+      "interpolateAtSample", "inverse", "inversesqrt", "isinf", "isnan", "ldexp",
+      "length", "lessThan", "lessThanEqual", "log", "log2", "matrixCompMult", "max",
+      "memoryBarrier", "memoryBarrierAtomicCounter", "memoryBarrierBuffer",
+      "memoryBarrierImage", "memoryBarrierShared", "min", "mix", "mod", "modf", "noise",
+      "noise1", "noise2", "noise3", "noise4", "normalize", "not", "notEqual",
+      "outerProduct", "packDouble2x32", "packHalf2x16", "packInt2x16", "packInt4x16",
+      "packSnorm2x16", "packSnorm4x8", "packUint2x16", "packUint4x16",
+      "packUnorm2x16", "packUnorm4x8", "pow", "radians", "reflect", "refract", "round",
+      "roundEven", "sign", "sin", "sinh", "smoothstep", "sqrt", "step", "tan", "tanh",
+      "texelFetch", "texelFetchOffset", "texture", "textureGather",
+      "textureGatherOffset", "textureGatherOffsets", "textureGrad",
+      "textureGradOffset", "textureLod", "textureLodOffset", "textureOffset",
+      "textureProj", "textureProjGrad", "textureProjGradOffset", "textureProjLod",
+      "textureProjLodOffset", "textureProjOffset", "textureQueryLevels",
+      "textureQueryLod", "textureSamples", "textureSize", "transpose", "trunc",
+      "uaddCarry", "uint16BitsToFloat16", "uintBitsToFloat", "umulExtended",
+      "unpackDouble2x32", "unpackHalf2x16", "unpackInt2x16", "unpackInt4x16",
+      "unpackSnorm2x16", "unpackSnorm4x8", "unpackUint2x16", "unpackUint4x16",
+      "unpackUnorm2x16", "unpackUnorm4x8", "usubBorrow", "active", "asm",
+      "atomic_uint", "attribute", "bool", "break", "buffer", "bvec2", "bvec3", "bvec4",
+      "case", "cast", "centroid", "class", "coherent", "common", "const", "continue",
+      "default", "discard", "dmat2", "dmat2x2", "dmat2x3", "dmat2x4", "dmat3", "dmat3x2",
+      "dmat3x3", "dmat3x4", "dmat4", "dmat4x2", "dmat4x3", "dmat4x4", "do", "double",
+      "dvec2", "dvec3", "dvec4", "else", "enum", "extern", "external", "false", "filter",
+      "fixed", "flat", "float", "for", "fvec2", "fvec3", "fvec4", "goto", "half", "highp",
+      "hvec2", "hvec3", "hvec4", "if", "iimage1D", "iimage1DArray", "iimage2D",
+      "iimage2DArray", "iimage2DMS", "iimage2DMSArray", "iimage2DRect", "iimage3D",
+      "iimageBuffer", "iimageCube", "iimageCubeArray", "image1D", "image1DArray",
+      "image2D", "image2DArray", "image2DMS", "image2DMSArray", "image2DRect",
+      "image3D", "imageBuffer", "imageCube", "imageCubeArray", "in", "inline", "inout",
+      "input", "int", "interface", "invariant", "isampler1D", "isampler1DArray",
+      "isampler2D", "isampler2DArray", "isampler2DMS", "isampler2DMSArray",
+      "isampler2DRect", "isampler3D", "isamplerBuffer", "isamplerCube",
+      "isamplerCubeArray", "ivec2", "ivec3", "ivec4", "layout", "long", "lowp", "mat2",
+      "mat2x2", "mat2x3", "mat2x4", "mat3", "mat3x2", "mat3x3", "mat3x4", "mat4",
+      "mat4x2", "mat4x3", "mat4x4", "mediump", "namespace", "noinline", "noperspective",
+      "out", "output", "packed", "partition", "patch", "precise", "precision", "public",
+      "readonly", "resource", "restrict", "return", "sample", "sampler1D",
+      "sampler1DArray", "sampler1DArrayShadow", "sampler1DShadow", "sampler2D",
+      "sampler2DArray", "sampler2DArrayShadow", "sampler2DMS", "sampler2DMSArray",
+      "sampler2DRect", "sampler2DRectShadow", "sampler2DShadow", "sampler3D",
+      "sampler3DRect", "samplerBuffer", "samplerCube", "samplerCubeArray",
+      "samplerCubeArrayShadow", "samplerCubeShadow", "shared", "short", "sizeof",
+      "smooth", "static", "struct", "subroutine", "superp", "switch", "template", "this",
+      "true", "typedef", "uimage1D", "uimage1DArray", "uimage2D", "uimage2DArray",
+      "uimage2DMS", "uimage2DMSArray", "uimage2DRect", "uimage3D", "uimageBuffer",
+      "uimageCube", "uimageCubeArray", "uint", "uniform", "union", "unsigned",
+      "usampler1D", "usampler1DArray", "usampler2D", "usampler2DArray",
+      "usampler2DMS", "usampler2DMSArray", "usampler2DRect", "usampler3D",
+      "usamplerBuffer", "usamplerCube", "usamplerCubeArray", "using", "uvec2", "uvec3",
+      "uvec4", "varying", "vec2", "vec3", "vec4", "void", "volatile", "while",
+      "writeonly",
+    };
+    if (reserved.contains(name))
+      return "GLSL reserves it";
+    if (name.starts_with("gl_"))
+      return "GLSL reserves the `gl_` prefix";
+    if (name.contains("__"))
+      return "the translation collapses a run of underscores";
+    return nullptr;
+  }
+
+  /// Rejects an interface name, or a uniform struct's field name, that the
+  /// translation would not keep.
+  void checkTranslatable(Dsymbol *s, const char *what, Type *t = nullptr) {
+    if (const char *why = unreservedRefusal(s->ident->toChars())) {
+      error(s->loc, "%s `%s` cannot keep its name in GLSL: %s", what,
+            s->ident->toChars(), why);
+      fatal();
+    }
+    if (!t)
+      return;
+    t = t->toBasetype();
+    while (t->ty == TY::Tsarray)
+      t = t->nextOf()->toBasetype();
+    if (t->ty == TY::Tstruct)
+      for (VarDeclaration *field : static_cast<TypeStruct *>(t)->sym->fields)
+        checkTranslatable(field, "uniform struct field", field->type);
+  }
+
   /// `llvm.spv.resource.handlefrombinding` for one descriptor.
   llvm::Value *buildResourceHandle(llvm::IRBuilder<> &builder, llvm::Type *handleTy,
                                    unsigned binding, const std::string &name) {
@@ -525,6 +632,15 @@ public:
     // it by `--entry`; the D function itself becomes an internal helper that
     // the always-inliner folds into it, so no opaque handle ever lives in a
     // Function-storage variable (which Vulkan forbids).
+    auto prior = entryPoints.try_emplace(fd->ident->toChars(), fd);
+    if (!prior.second) {
+      error(fd->loc,
+            "`@fragment` entry point `%s` is defined by both `%s` and `%s`; an "
+            "entry point's name must be unique across the module",
+            fd->ident->toChars(), prior.first->second->toPrettyChars(),
+            fd->toPrettyChars());
+      fatal();
+    }
     auto *void_func_void =
         llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {}, false);
     auto *f = llvm::Function::Create(void_func_void,
@@ -568,6 +684,23 @@ public:
           dty->ty == TY::Tstruct ? static_cast<TypeStruct *>(dty)->sym : nullptr;
       const bool isInput = hasShaderInputUDA(vd);
       const bool isUniform = hasShaderUniformUDA(vd);
+      const bool isImage =
+          sd && sd->ident == Id::dcSampler2D && isFromLDC_DCompute(sd);
+      if (isInput && isUniform) {
+        error(vd->loc,
+              "`@fragment` parameter `%s` is marked both `@input` and "
+              "`@uniform`; it must be one",
+              name);
+        fatal();
+      }
+      if ((isInput || isUniform) && isImage) {
+        error(vd->loc,
+              "`@fragment` parameter `%s` is a `Sampler2D`, which takes no "
+              "`@input` or `@uniform` marker",
+              name);
+        fatal();
+      }
+      checkTranslatable(vd, "`@fragment` parameter", isUniform ? dty : nullptr);
       if (isInput || isUniform) {
         const auto crossing = isInput ? Crossing::varying : Crossing::uniform;
         if (const char *why = refusal(dty, crossing)) {
@@ -588,7 +721,7 @@ public:
         llvm::Type *it = interfaceType(dty);
         llvm::Value *v = builder.CreateLoad(it, buildUniform(it, name), name);
         args[i] = asArgument(builder, fromInterface(builder, v, dty), pt);
-      } else if (sd && sd->ident == Id::dcSampler2D && isFromLDC_DCompute(sd)) {
+      } else if (isImage) {
         // Binding 0 is the shared sampler; images take the bindings after it.
         recordInterfaceUse(vd, entry, "image", nextImageBinding);
         args[i] = buildResourceHandle(builder, pt, nextImageBinding++, name);
