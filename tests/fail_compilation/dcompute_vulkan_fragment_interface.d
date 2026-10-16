@@ -15,6 +15,11 @@
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/glprefix.d 2>&1 | FileCheck %t/glprefix.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/underscores.d 2>&1 | FileCheck %t/underscores.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/field.d 2>&1 | FileCheck %t/field.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/spvprefix.d 2>&1 | FileCheck %t/spvprefix.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/temporary.d 2>&1 | FileCheck %t/temporary.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/membername.d 2>&1 | FileCheck %t/membername.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/unicode.d 2>&1 | FileCheck %t/unicode.d
+// RUN: %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/nearmiss.d -of=%t/nearmiss.o
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/twomarkers.d 2>&1 | FileCheck %t/twomarkers.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/markedimage.d 2>&1 | FileCheck %t/markedimage.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/uint.d 2>&1 | FileCheck %t/uint.d
@@ -116,6 +121,47 @@ alias float4 = __vector(float[4]);
 // CHECK: field.d([[@LINE+1]]): Error: uniform struct field `filter` cannot keep its name in GLSL: GLSL reserves it
 struct Light { float filter; }
 @fragment float4 first(@uniform Light light) { return float4(light.filter); }
+
+//--- spvprefix.d
+@compute(CompileFor.deviceOnly) module spvprefix;
+import ldc.dcompute;
+alias float4 = __vector(float[4]);
+// CHECK: spvprefix.d([[@LINE+1]]): Error: `@fragment` parameter `spvGain` cannot keep its name in GLSL: the translation reserves the `spv` prefix
+@fragment float4 first(@uniform float spvGain) { return float4(spvGain); }
+
+//--- temporary.d
+@compute(CompileFor.deviceOnly) module temporary;
+import ldc.dcompute;
+alias float4 = __vector(float[4]);
+// CHECK: temporary.d([[@LINE+1]]): Error: `@fragment` parameter `_2_x` cannot keep its name in GLSL: the translation names its own temporaries so
+@fragment float4 first(@uniform float _2_x) { return float4(_2_x); }
+
+//--- membername.d
+@compute(CompileFor.deviceOnly) module membername;
+import ldc.dcompute;
+alias float4 = __vector(float[4]);
+// CHECK: membername.d([[@LINE+1]]): Error: uniform struct field `_m0` cannot keep its name in GLSL: the translation names its own temporaries so
+struct Light { float _m0; }
+@fragment float4 first(@uniform Light light) { return float4(light._m0); }
+
+//--- unicode.d
+@compute(CompileFor.deviceOnly) module unicode;
+import ldc.dcompute;
+alias float4 = __vector(float[4]);
+// CHECK: unicode.d([[@LINE+1]]): Error: `@fragment` parameter `gänge` cannot keep its name in GLSL: the translation keeps only ASCII letters, digits and `_`
+@fragment float4 first(@uniform float gänge) { return float4(gänge); }
+
+//--- nearmiss.d
+// Names that look reserved and are not: a field `_1` (members reserve only
+// `_m<digits>`), a parameter `_m0`, one starting `sp`, one ending in a digit.
+@compute(CompileFor.deviceOnly) module nearmiss;
+import ldc.dcompute;
+alias float4 = __vector(float[4]);
+struct Light { float _1; float m0; }
+@fragment float4 first(@uniform Light light, @uniform float _m0, @uniform float spin, @uniform float tint2)
+{
+    return float4(light._1 + light.m0 + _m0 + spin + tint2);
+}
 
 //--- twomarkers.d
 @compute(CompileFor.deviceOnly) module twomarkers;
