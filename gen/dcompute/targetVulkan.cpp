@@ -28,6 +28,7 @@
 #include "llvm/IR/IntrinsicsSPIRV.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringExtras.h"
 #include "dmd/mtype.h"
 #include "dmd/aggregate.h"
 #include "gen/tollvm.h"
@@ -501,12 +502,15 @@ public:
     return slot;
   }
 
-  /// Why an interface name would not survive translation to GLSL, or null.
-  /// spirv-cross renames a name that GLSL reserves (a keyword or a built-in
-  /// function) and collapses a run of underscores, and GLSL reserves the
-  /// `gl_` prefix; a host binding by the D name would then find nothing. The
-  /// list is spirv-cross's own (`CompilerGLSL::replace_illegal_names`).
-  static const char *unreservedRefusal(llvm::StringRef name) {
+  /// Why an interface name (or, with `member`, a uniform struct's field name)
+  /// would not survive translation to GLSL, or null: a host binding by the D
+  /// name would then find nothing. These are spirv-cross's rules: it renames
+  /// a name GLSL reserves (a keyword or built-in function, its
+  /// `CompilerGLSL::replace_illegal_names` list), one with the `gl_` or `spv`
+  /// prefix, the `_<digits>` names it gives temporaries (`_m<digits>` for
+  /// members), and any character outside ASCII letters, digits and `_`; and
+  /// it collapses a run of underscores (`spirv_cross_parsed_ir.cpp`).
+  static const char *unreservedRefusal(llvm::StringRef name, bool member) {
     static const llvm::StringSet<> reserved = {
       "abs", "acos", "acosh", "all", "any", "asin", "asinh", "atan", "atanh", "atomicAdd",
       "atomicCompSwap", "atomicCounter", "atomicCounterDecrement",
@@ -580,15 +584,30 @@ public:
       return "GLSL reserves it";
     if (name.starts_with("gl_"))
       return "GLSL reserves the `gl_` prefix";
+    if (name.starts_with("spv"))
+      return "the translation reserves the `spv` prefix";
+    for (char c : name)
+      if (!llvm::isAlnum(c) && c != '_')
+        return "the translation keeps only ASCII letters, digits and `_`";
     if (name.contains("__"))
       return "the translation collapses a run of underscores";
+    // `_<digits>` and `_<digits>_...` name the translation's temporaries;
+    // `_m<digits>` its unnamed members.
+    const llvm::StringRef digitsFrom = member ? name.drop_front(2) : name.drop_front(1);
+    const bool prefixed = member ? name.starts_with("_m") : name.starts_with("_");
+    if (prefixed && !digitsFrom.empty() && llvm::isDigit(digitsFrom.front())) {
+      const llvm::StringRef rest = digitsFrom.drop_while(llvm::isDigit);
+      if (rest.empty() || (!member && rest.front() == '_'))
+        return "the translation names its own temporaries so";
+    }
     return nullptr;
   }
 
   /// Rejects an interface name, or a uniform struct's field name, that the
   /// translation would not keep.
   void checkTranslatable(Dsymbol *s, const char *what, Type *t = nullptr) {
-    if (const char *why = unreservedRefusal(s->ident->toChars())) {
+    const bool member = std::strcmp(what, "uniform struct field") == 0;
+    if (const char *why = unreservedRefusal(s->ident->toChars(), member)) {
       error(s->loc, "%s `%s` cannot keep its name in GLSL: %s", what,
             s->ident->toChars(), why);
       fatal();
