@@ -153,14 +153,15 @@ alias float4 = __vector(float[4]);
 
 //--- nearmiss.d
 // Names that look reserved and are not: a field `_1` (members reserve only
-// `_m<digits>`), a parameter `_m0`, one starting `sp`, one ending in a digit.
+// `_m<digits>`), a parameter `_m0`, one starting `sp`, one ending in a digit,
+// and one-letter names.
 @compute(CompileFor.deviceOnly) module nearmiss;
 import ldc.dcompute;
 alias float4 = __vector(float[4]);
-struct Light { float _1; float m0; }
-@fragment float4 first(@uniform Light light, @uniform float _m0, @uniform float spin, @uniform float tint2)
+struct Light { float _1; float m0; float g; }
+@fragment float4 first(@uniform Light light, @uniform float _m0, @uniform float spin, @uniform float tint2, @uniform float u)
 {
-    return float4(light._1 + light.m0 + _m0 + spin + tint2);
+    return float4(light._1 + light.m0 + light.g + _m0 + spin + tint2 + u);
 }
 
 //--- twomarkers.d
