@@ -593,9 +593,10 @@ public:
       return "the translation collapses a run of underscores";
     // `_<digits>` and `_<digits>_...` name the translation's temporaries;
     // `_m<digits>` its unnamed members.
-    const llvm::StringRef digitsFrom = member ? name.drop_front(2) : name.drop_front(1);
-    const bool prefixed = member ? name.starts_with("_m") : name.starts_with("_");
-    if (prefixed && !digitsFrom.empty() && llvm::isDigit(digitsFrom.front())) {
+    const llvm::StringRef prefix = member ? "_m" : "_";
+    const llvm::StringRef digitsFrom =
+        name.starts_with(prefix) ? name.drop_front(prefix.size()) : llvm::StringRef();
+    if (!digitsFrom.empty() && llvm::isDigit(digitsFrom.front())) {
       const llvm::StringRef rest = digitsFrom.drop_while(llvm::isDigit);
       if (rest.empty() || (!member && rest.front() == '_'))
         return "the translation names its own temporaries so";
@@ -719,7 +720,6 @@ public:
               name);
         fatal();
       }
-      checkTranslatable(vd, "`@fragment` parameter", isUniform ? dty : nullptr);
       if (isInput || isUniform) {
         const auto crossing = isInput ? Crossing::varying : Crossing::uniform;
         if (const char *why = refusal(dty, crossing)) {
@@ -728,6 +728,7 @@ public:
           fatal();
         }
       }
+      checkTranslatable(vd, "`@fragment` parameter", isUniform ? dty : nullptr);
 
       if (isInput) {
         recordInterfaceUse(vd, entry, "input", nextLocation);
