@@ -40,6 +40,9 @@ public:
 
   IRState *_ir;
   std::vector<::Module *> modules;
+  /// The D declaration of each function defined in the device module, for
+  /// diagnostics found on the LLVM module.
+  llvm::DenseMap<llvm::Function *, FuncDeclaration *> definitions;
 
   DComputeTarget(llvm::LLVMContext &c, int v, ID id, const char *_short_name,
                  const char *suffix, TargetABI *a, std::array<int, 5> map)

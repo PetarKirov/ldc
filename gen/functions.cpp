@@ -1354,6 +1354,7 @@ void DtoDefineFunction(FuncDeclaration *fd, bool linkageAvailableExternally) {
   funcGen.allocasBlock = nullptr;
 
   if (gIR->dcomputetarget) {
+    gIR->dcomputetarget->definitions[func] = fd;
     auto kernAttr = getKernelAttr(fd);
     if (kernAttr) {
       auto fn = gIR->module.getFunction(fd->mangleString);
