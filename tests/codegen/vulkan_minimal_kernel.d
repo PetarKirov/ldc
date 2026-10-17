@@ -5,15 +5,12 @@
 @compute(CompileFor.deviceOnly) module vulkan_minimal_kernel;
 import ldc.dcompute;
 
+// The kernel's body folds into its entry point: Vulkan SPIR-V has no linkage,
+// so every helper is internal and always inlined.
 // CHECK: OpEntryPoint GLCompute %[[WRAPPER:[a-zA-Z0-9_]+]] "{{.*}}minimal_kernel{{.*}}"
-
-// CHECK: %[[CORE:[a-zA-Z0-9_]+]] = OpFunction %void
-// CHECK: OpStore
-// CHECK: OpReturn
-// CHECK: OpFunctionEnd
-
+// CHECK-NOT: OpFunctionCall
 // CHECK: %[[WRAPPER]] = OpFunction %void
-// CHECK: OpFunctionCall %void %[[CORE]]
+// CHECK: OpStore
 // CHECK: OpReturn
 // CHECK: OpFunctionEnd
 

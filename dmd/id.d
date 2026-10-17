@@ -604,7 +604,7 @@ immutable Msgtable[] msgtable =
     // IN_LLVM: DCompute specific types and functionss
     { "dcompute" },
     { "dcPointer", "Pointer" },
-    { "dcSampler", "Sampler" },
+    { "dcSampler", "SamplerState" },
     { "dcSampler2D", "Sampler2D" },
     { "dcSharedSampler", "__spirv_shared_sampler" },
     { "dcReflect", "__dcompute_reflect" },
