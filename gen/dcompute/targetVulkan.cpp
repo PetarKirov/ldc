@@ -35,6 +35,8 @@
 #include "ir/irtype.h"
 #include "ir/irtypeaggr.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SCCIterator.h"
+#include "llvm/Analysis/CallGraph.h"
 #include <cstring>
 #include <string>
 
@@ -73,7 +75,36 @@ public:
     _ir->module.addModuleFlag(llvm::Module::Error, "spirv.signed-integers", 1);
   }
 
+  // A shader has no call stack: SPIR-V for Vulkan forbids recursion, and a
+  // translator meets it as an endless inlining. Every cycle in the call graph
+  // is an error at its first function, naming the functions on it.
+  void rejectRecursion() {
+    llvm::CallGraph graph(_ir->module);
+    for (auto scc = llvm::scc_begin(&graph); !scc.isAtEnd(); ++scc) {
+      if (!scc.hasCycle())
+        continue;
+      FuncDeclaration *first = nullptr;
+      std::string names;
+      for (llvm::CallGraphNode *node : *scc) {
+        auto it = definitions.find(node->getFunction());
+        if (it == definitions.end())
+          continue;
+        if (!first)
+          first = it->second;
+        if (!names.empty())
+          names += "`, `";
+        names += it->second->toPrettyChars();
+      }
+      error(first ? first->loc : Loc(), "device code may not recurse: `%s` %s",
+            names.c_str(),
+            scc->size() == 1 ? "calls itself" : "call each other");
+    }
+    if (global.errors)
+      fatal();
+  }
+
   void addMetadata() override {
+    rejectRecursion();
     // Vulkan SPIR-V has no linkage: every function but the entry points must
     // be internal, or the module needs the `Linkage` capability and fails
     // validation. Entry points carry `hlsl.shader`; everything else that has a
