@@ -198,15 +198,16 @@ struct Sampler2D
     const(void)* handle;
 }
 
-/// An opaque sampler handle (`OpTypeSampler`).
-struct Sampler
+/// An opaque sampler handle (`OpTypeSampler`). Named for HLSL's sampler
+/// without an image, and so as not to clash with `ldc.opencl.Sampler`.
+struct SamplerState
 {
     const(void)* handle;
 }
 
 /// The one sampler every image is read through: set 0, binding 0. The
 /// compiler materialises the handle at each call.
-Sampler __spirv_shared_sampler() @safe pure nothrow @nogc;
+SamplerState __spirv_shared_sampler() @safe pure nothrow @nogc;
 
 static if (__traits(compiles, { __vector(float[2]) a; __vector(float[4]) b; __vector(int[2]) c; }))
 {
@@ -227,6 +228,6 @@ static if (__traits(compiles, { __vector(float[2]) a; __vector(float[4]) b; __ve
     // A texture read: pure in the only sense that matters to a shader (the
     // image is immutable for the draw), and never allocates or throws.
     pragma(LDC_intrinsic, "llvm.spv.resource.sample.v4f32.tspirv.Image_f32_1_2_0_0_1_0t.tspirv.Samplert.v2f32.v2i32")
-    __vector(float[4]) __spirv_resource_sample_2d(Sampler2D image, Sampler sampler,
+    __vector(float[4]) __spirv_resource_sample_2d(Sampler2D image, SamplerState sampler,
         __vector(float[2]) uv, __vector(int[2]) offset) @safe pure nothrow @nogc;
 }
