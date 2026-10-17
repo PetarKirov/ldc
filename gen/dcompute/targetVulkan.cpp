@@ -52,9 +52,12 @@ public:
     std::string targTriple = "spirv1.6-unknown-vulkan1.3-compute";
     _ir->module.setTargetTriple(llvm::Triple(targTriple));
 
+    // No arch name: an explicit one replaces the triple's, and with it the
+    // `1.6` sub-architecture that selects the SPIR-V version; the backend
+    // would emit 1.4.
     auto floatABI = ::FloatABI::Hard;
     targetMachine = createTargetMachine(
-            targTriple, "spirv", "", {},
+            targTriple, "", "", {},
             ExplicitBitness::None, floatABI,
             llvm::Reloc::Static, llvm::CodeModel::Medium, llvm::CodeGenOptLevel::None, false);
 
