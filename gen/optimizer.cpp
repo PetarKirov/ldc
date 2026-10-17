@@ -64,6 +64,9 @@
 #include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 #include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/Transforms/Scalar/StructurizeCFG.h"
+#include "llvm/Transforms/Utils/FixIrreducible.h"
+#include "llvm/Transforms/Utils/UnifyLoopExits.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizerOptions.h"
 #include "llvm/Transforms/Instrumentation/InstrProfiling.h"
@@ -628,6 +631,19 @@ bool ldc_optimize_module(llvm::Module *M, llvm::TargetMachine *TM) {
         llvm::FunctionPassManager FPM;
         FPM.addPass(llvm::SROAPass(llvm::SROAOptions(llvm::SROAOptions::ModifyCFG)));
         FPM.addPass(llvm::PromotePass());
+        MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+      }
+      // A shader's control flow must be structured, and D's is not, nor what
+      // the optimiser makes of it: early returns and breaks out of nested
+      // conditions leave regions with several exits, which the SPIR-V
+      // backend's structurizer cannot always give single merges. Turn every
+      // function into nested single-entry, single-exit regions first, as the
+      // GPU targets that need structured control flow do.
+      {
+        llvm::FunctionPassManager FPM;
+        FPM.addPass(llvm::FixIrreduciblePass());
+        FPM.addPass(llvm::UnifyLoopExitsPass());
+        FPM.addPass(llvm::StructurizeCFGPass());
         MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
       }
       MPM.run(*M, MAM);
