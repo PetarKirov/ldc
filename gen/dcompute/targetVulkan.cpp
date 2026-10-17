@@ -73,6 +73,10 @@ public:
     // `int`: ask the SPIR-V backend for signed integer types, since LLVM's
     // integers carry no sign of their own.
     _ir->module.addModuleFlag(llvm::Module::Error, "spirv.signed-integers", 1);
+    // dcompute's global pointers are the addresses a host hands a kernel
+    // in its argument buffer: buffer device addresses (PhysicalStorageBuffer).
+    _ir->module.addModuleFlag(llvm::Module::Error,
+                              "spirv.physical-storage-buffer", 1);
   }
 
   // A shader has no call stack: SPIR-V for Vulkan forbids recursion, and a
