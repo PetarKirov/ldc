@@ -45,7 +45,9 @@ class TargetVulkan : public DComputeTarget {
 public:
   TargetVulkan(llvm::LLVMContext &c, int ver)
       : DComputeTarget(c, ver, ID::Vulkan, "vulkan", "spv", createSPIRVVulkanABI(),
-                       {{0, 1, 2, 3, 4}}) {
+                       // dcompute's Shared is workgroup memory (addrspace 3 in the
+                       // SPIR-V backend) and Constant is UniformConstant (2).
+                       {{0, 1, 3, 2, 4}}) {
 
     _ir = new IRState("dcomputeTargetVulkan", ctx);
     // "spirv-vulkan-foo"? foo = library, pixel, etc
