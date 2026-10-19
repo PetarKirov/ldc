@@ -24,52 +24,52 @@ import ldc.dcompute;
 import ldc.dcompute;
 struct V { @builtin(Builtin.position) __vector(float[4]) position; }
 // CHECK: wrongtype.d(5): Error: built-in `vertexIndex` of `@vertex` parameter `v` is `int`, not `float`
-@vertex V f(@builtin(Builtin.vertexIndex) float v) { V r; r.position = v; return r; }
+@_profiles("vulkan1.3") @vertex V f(@builtin(Builtin.vertexIndex) float v) { V r; r.position = v; return r; }
 
 //--- wrongdirection.d
 @compute(CompileFor.deviceOnly) module wrongdirection;
 import ldc.dcompute;
 struct V { @builtin(Builtin.position) __vector(float[4]) position; }
 // CHECK: wrongdirection.d(5): Error: built-in `position` of `@vertex` parameter `p` is an output, not an input
-@vertex V f(@builtin(Builtin.position) __vector(float[4]) p) { V r; r.position = p; return r; }
+@_profiles("vulkan1.3") @vertex V f(@builtin(Builtin.position) __vector(float[4]) p) { V r; r.position = p; return r; }
 
 //--- noposition.d
 @compute(CompileFor.deviceOnly) module noposition;
 import ldc.dcompute;
 struct V { __vector(float[4]) colour; }
 // CHECK: noposition.d(5): Error: `@vertex` function `f` returns `V`, which has no field marked `@builtin(Builtin.position)`
-@vertex V f() { V r; return r; }
+@_profiles("vulkan1.3") @vertex V f() { V r; return r; }
 
 //--- notastruct.d
 @compute(CompileFor.deviceOnly) module notastruct;
 import ldc.dcompute;
 // CHECK: notastruct.d(4): Error: `@vertex` function `f` cannot return `__vector(float[4])`: a vertex entry point returns a struct with a position
-@vertex __vector(float[4]) f() { return __vector(float[4])(0.0f); }
+@_profiles("vulkan1.3") @vertex __vector(float[4]) f() { return __vector(float[4])(0.0f); }
 
 //--- twopositions.d
 @compute(CompileFor.deviceOnly) module twopositions;
 import ldc.dcompute;
 // CHECK: twopositions.d(4): Error: `@vertex` result field `b` is a second `@builtin(Builtin.position)`; `a` is the first
 struct V { @builtin(Builtin.position) __vector(float[4]) a; @builtin(Builtin.position) __vector(float[4]) b; }
-@vertex V f() { V r; return r; }
+@_profiles("vulkan1.3") @vertex V f() { V r; return r; }
 
 //--- badoutput.d
 @compute(CompileFor.deviceOnly) module badoutput;
 import ldc.dcompute;
 // CHECK: badoutput.d(4): Error: `@vertex` result field `n` cannot be `int`: an integer cannot be interpolated
 struct V { @builtin(Builtin.position) __vector(float[4]) position; int n; }
-@vertex V f() { V r; return r; }
+@_profiles("vulkan1.3") @vertex V f() { V r; return r; }
 
 //--- markedbuiltin.d
 @compute(CompileFor.deviceOnly) module markedbuiltin;
 import ldc.dcompute;
 struct V { @builtin(Builtin.position) __vector(float[4]) position; }
 // CHECK: markedbuiltin.d(5): Error: `@vertex` parameter `v` is marked both `@builtin` and `@input`; it must be one
-@vertex V f(@builtin(Builtin.vertexIndex) @input int v) { V r; return r; }
+@_profiles("vulkan1.3") @vertex V f(@builtin(Builtin.vertexIndex) @input int v) { V r; return r; }
 
 //--- badfield.d
 @compute(CompileFor.deviceOnly) module badfield;
 import ldc.dcompute;
 // CHECK: badfield.d(4): Error: built-in `vertexIndex` of `@vertex` result field `i` is an input, not an output
 struct V { @builtin(Builtin.position) __vector(float[4]) position; @builtin(Builtin.vertexIndex) int i; }
-@vertex V f() { V r; return r; }
+@_profiles("vulkan1.3") @vertex V f() { V r; return r; }
