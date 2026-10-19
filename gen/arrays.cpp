@@ -17,6 +17,7 @@
 #include "dmd/init.h"
 #include "dmd/module.h"
 #include "dmd/mtype.h"
+#include "gen/dcompute/target.h"
 #include "gen/dvalue.h"
 #include "gen/funcgenstate.h"
 #include "gen/irstate.h"
@@ -61,9 +62,34 @@ static void DtoArrayInit(Loc loc, LLValue *ptr, LLValue *length,
   IF_LOG Logger::println("DtoArrayInit");
   LOG_SCOPE;
 
+  // Vulkan has no byte-wise memory operations, so no memset, and grants
+  // 64-bit integers only with a device feature: an array of constant length
+  // takes a constant value in one store of the whole array, and any other
+  // loop below counts in 32 bits.
+  const bool vulkan = gIR->dcomputetarget &&
+                      gIR->dcomputetarget->target == DComputeTarget::ID::Vulkan;
+  auto *constLength = llvm::dyn_cast<llvm::ConstantInt>(length);
+  if (vulkan && constLength && constLength->getValue().isIntN(31) &&
+      (!elementValue->isLVal() || !DtoIsInMemoryOnly(elementValue->type))) {
+    LLConstant *c = isaConstant(DtoRVal(elementValue));
+    const uint64_t n = constLength->getZExtValue();
+    if (c && !c->getType()->isIntegerTy(1) && n <= 1024) {
+      auto *arrayType = llvm::ArrayType::get(c->getType(), n);
+      LLConstant *init =
+          c->isNullValue()
+              ? static_cast<LLConstant *>(
+                    llvm::ConstantAggregateZero::get(arrayType))
+              : llvm::ConstantArray::get(
+                    arrayType, llvm::SmallVector<LLConstant *, 16>(n, c));
+      DtoStore(init, ptr);
+      return;
+    }
+  }
+
   // Let's first optimize all zero/i8 initializations down to a memset.
   // This simplifies codegen later on as llvm null's have no address!
-  if (!elementValue->isLVal() || !DtoIsInMemoryOnly(elementValue->type)) {
+  if (!vulkan &&
+      (!elementValue->isLVal() || !DtoIsInMemoryOnly(elementValue->type))) {
     LLValue *val = DtoRVal(elementValue);
     LLConstant *constantVal = isaConstant(val);
     bool isNullConstant = (constantVal && constantVal->isNullValue());
@@ -84,8 +110,15 @@ static void DtoArrayInit(Loc loc, LLValue *ptr, LLValue *length,
   llvm::BasicBlock *bodybb = gIR->insertBBAfter(condbb, "arrayinit.body");
   llvm::BasicBlock *endbb = gIR->insertBBAfter(bodybb, "arrayinit.end");
 
+  LLType *sz = DtoSize_t();
+  if (vulkan && constLength && constLength->getValue().isIntN(31)) {
+    sz = LLType::getInt32Ty(gIR->context());
+    length = llvm::ConstantInt::get(sz, constLength->getZExtValue());
+  }
+
   // initialize iterator
-  LLValue *itr = DtoAllocaDump(DtoConstSize_t(0), 0, "arrayinit.itr");
+  LLValue *itr =
+      DtoAllocaDump(llvm::ConstantInt::get(sz, 0), 0, "arrayinit.itr");
 
   // move into the for condition block, ie. start the loop
   assert(!gIR->scopereturned());
@@ -94,7 +127,6 @@ static void DtoArrayInit(Loc loc, LLValue *ptr, LLValue *length,
   // replace current scope
   gIR->ir->SetInsertPoint(condbb);
 
-  LLType *sz = DtoSize_t();
   // create the condition
   LLValue *cond_val =
       gIR->ir->CreateICmpNE(DtoLoad(sz, itr), length, "arrayinit.condition");
@@ -113,7 +145,8 @@ static void DtoArrayInit(Loc loc, LLValue *ptr, LLValue *length,
   DtoAssign(loc, &arrayelem, elementValue, EXP::blit);
 
   // increment iterator
-  DtoStore(gIR->ir->CreateAdd(itr_val, DtoConstSize_t(1), "arrayinit.new_itr"),
+  DtoStore(gIR->ir->CreateAdd(itr_val, llvm::ConstantInt::get(sz, 1),
+                               "arrayinit.new_itr"),
            itr);
 
   // loop
