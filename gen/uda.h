@@ -35,14 +35,6 @@ StructLiteralExp *getKernelAttr(Dsymbol *sym);
 /// Returns the `@ldc.dcompute._shader` UDA applied to `sym`, or nullptr.
 StructLiteralExp *getShaderAttr(Dsymbol *sym);
 /// Whether `sym` (a `@fragment` parameter) carries `@ldc.dcompute.input`.
-bool hasShaderInputUDA(Dsymbol *sym);
-/// Whether `sym` (a `@fragment` parameter) carries `@ldc.dcompute.uniform`.
-bool hasShaderUniformUDA(Dsymbol *sym);
-/// The `Builtin` named by an `@ldc.dcompute._builtin` UDA on `sym`, or -1.
-int getShaderBuiltinUDA(Dsymbol *sym);
-/// The comma-separated profile names of an `@ldc.dcompute._profiles` UDA on
-/// `sym`, or null.
-const char *getShaderProfilesUDA(Dsymbol *sym);
 /// Must match ldc.dcompute.Compilefor + 1 == DComputeCompileFor
 enum class DComputeCompileFor : int
 {

@@ -1087,3 +1087,14 @@ void hideLLVMOptions() {
 }
 
 } // namespace opts
+
+#if LDC_LLVM_SUPPORTED_TARGET_SPIRV || LDC_LLVM_SUPPORTED_TARGET_NVPTX || LDC_LLVM_SUPPORTED_TARGET_AArch64
+// For gen/dcompute/shaderinterface.d.
+const char *dcomputeActiveProfile() { return opts::dcomputeProfile.c_str(); }
+const char *dcomputeManifestPath() { return opts::dcomputeManifest.c_str(); }
+bool dcomputeHasTargets() { return !opts::dcomputeTargets.empty(); }
+#else
+const char *dcomputeActiveProfile() { return ""; }
+const char *dcomputeManifestPath() { return ""; }
+bool dcomputeHasTargets() { return false; }
+#endif

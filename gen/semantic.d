@@ -16,7 +16,6 @@ import dmd.dmodule;
 extern(C++) void dcomputeSemanticAnalysis(Module m);
 extern(C) int hasComputeAttr(Dsymbol m);
 extern(C++) void runAllSemanticAnalysisPlugins(Module m);
-extern(C++) bool writeDComputeManifest(ref Modules modules);
 
 extern(C++) void extraLDCSpecificSemanticAnalysis(ref Modules modules)
 {
@@ -27,6 +26,10 @@ extern(C++) void extraLDCSpecificSemanticAnalysis(ref Modules modules)
             dcomputeSemanticAnalysis(m);
         }
     }
+
+    // Then the shader entry points of the unit, and their interfaces.
+    import gen.dcompute.shaderinterface : analyseShaderEntries;
+    analyseShaderEntries(modules);
 
     foreach(m; modules[])
     {
