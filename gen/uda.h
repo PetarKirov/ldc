@@ -38,6 +38,8 @@ StructLiteralExp *getShaderAttr(Dsymbol *sym);
 bool hasShaderInputUDA(Dsymbol *sym);
 /// Whether `sym` (a `@fragment` parameter) carries `@ldc.dcompute.uniform`.
 bool hasShaderUniformUDA(Dsymbol *sym);
+/// The `Builtin` named by an `@ldc.dcompute._builtin` UDA on `sym`, or -1.
+int getShaderBuiltinUDA(Dsymbol *sym);
 /// Must match ldc.dcompute.Compilefor + 1 == DComputeCompileFor
 enum class DComputeCompileFor : int
 {

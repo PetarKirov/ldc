@@ -105,6 +105,7 @@ struct Id
     static Identifier *udaShader;
     static Identifier *udaShaderInput;
     static Identifier *udaShaderUniform;
+    static Identifier *udaShaderBuiltin;
     static Identifier *udaCompute;
     static Identifier *udaDynamicCompile;
     static Identifier *udaDynamicCompileConst;
