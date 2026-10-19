@@ -747,7 +747,7 @@ version (IN_LLVM) {} else
     {
         // `-mdcompute-manifest`: the shader entry points and their profiles
         // follow from declarations alone, so the compilation stops here.
-        import gen.semantic : writeDComputeManifest;
+        import gen.dcompute.shaderinterface : writeDComputeManifest;
         if (writeDComputeManifest(modules))
             return global.errors ? EXIT_FAILURE : EXIT_SUCCESS;
     }
