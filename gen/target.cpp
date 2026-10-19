@@ -411,6 +411,17 @@ Expression *Target::getTargetInfo(const char *name_, Loc loc) {
     return TupleExp::create(loc, exps);
   }
 
+  // The shader profile of the compilation: the name `-mdcompute-profile`
+  // gives a device compilation, `cpu` for one with no dcompute target, and
+  // `manifest` while `-mdcompute-manifest` lists the entry points. What a
+  // profile means is the shader library's table, not the compiler's.
+  if (name == "shaderProfile") {
+    const char *profile = !opts::dcomputeManifest.empty() ? "manifest"
+                          : opts::dcomputeTargets.empty()  ? "cpu"
+                                                           : opts::dcomputeProfile.c_str();
+    return createStringExp(mem.xstrdup(profile));
+  }
+
   if (name == "dcomputeFilePrefix") {
     return createStringExp(
                 mem.xstrdup(opts::dcomputeFilePrefix.c_str()));

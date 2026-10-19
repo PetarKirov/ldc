@@ -96,6 +96,12 @@ struct DComputeSemanticAnalyser : public StoppableVisitor {
   }
 
   void visit(VarDeclaration *decl) override {
+    // A manifest constant (`enum`) exists only at compile time: its
+    // initializer, a profile's name for one, is never device data.
+    if (decl->storage_class & STCmanifest) {
+      stop = true;
+      return;
+    }
     // Don't print multiple errors for 'synchronized'. see visit(CallExp*)
     if (decl->isDataseg()) {
       if (strncmp(decl->toChars(), "__critsec", 9) &&

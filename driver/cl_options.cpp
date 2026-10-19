@@ -777,6 +777,18 @@ cl::opt<std::string>
                        cl::desc("Prefix to prepend to the generated kernel files."),
                        cl::init("kernels"),
                        cl::value_desc("prefix"));
+cl::opt<std::string>
+    dcomputeProfile("mdcompute-profile",
+                    cl::desc("The shader profile a Vulkan compilation is for: "
+                             "only the entry points it lists are emitted, and "
+                             "__traits(getTargetInfo, \"shaderProfile\") names it"),
+                    cl::value_desc("name"));
+cl::opt<std::string>
+    dcomputeManifest("mdcompute-manifest",
+                     cl::desc("Write the unit's shader entry points, with "
+                              "their stages and profiles, as JSON to <file> "
+                              "once declarations are analysed, and stop"),
+                     cl::value_desc("file"));
 cl::opt<bool>
     fembedDCompute("fembed-dcompute",
                    cl::desc("Embed DCompute target code into host module (default: true)"),

@@ -18,6 +18,7 @@
 #include "gen/abi/targets.h"
 #include "gen/dcompute/target.h"
 #include "gen/dcompute/druntime.h"
+#include "gen/dcompute/shaderprofiles.h"
 #include "gen/logger.h"
 #include "gen/optimizer.h"
 #include "gen/uda.h"
@@ -804,6 +805,13 @@ public:
     }
     const Stage stage = static_cast<Stage>(stageValue);
     const char *attr = stageAttr(stage);
+
+    // Only the entry points of the active profile are emitted; the others
+    // stay internal helpers, which the optimiser drops.
+    if (!isEmittedForActiveProfile(fd, static_cast<int>(stage))) {
+      llf->setLinkage(llvm::GlobalValue::InternalLinkage);
+      return;
+    }
 
     // The entry point is named after the D function so a consumer can pick
     // it by `--entry`; the D function itself becomes an internal helper that

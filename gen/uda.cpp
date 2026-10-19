@@ -1,5 +1,7 @@
 #include "gen/uda.h"
 
+#include "dmd/root/rmem.h"
+
 #include "dmd/aggregate.h"
 #include "dmd/attrib.h"
 #include "dmd/declaration.h"
@@ -719,6 +721,16 @@ bool hasShaderInputUDA(Dsymbol *sym) {
 
 bool hasShaderUniformUDA(Dsymbol *sym) {
   return getMagicAttribute(sym, Id::udaShaderUniform, Id::dcompute) != nullptr;
+}
+
+/// The comma-separated profile names of an `@ldc.dcompute._profiles` UDA on
+/// `sym`, or null.
+const char *getShaderProfilesUDA(Dsymbol *sym) {
+  auto sle = getMagicAttribute(sym, Id::udaShaderProfiles, Id::dcompute);
+  if (!sle)
+    return nullptr;
+  checkStructElems(sle, {Type::tstring});
+  return mem.xstrdup(getFirstElemString(sle).str().c_str());
 }
 
 /// The `Builtin` named by an `@ldc.dcompute._builtin` UDA on `sym`, or -1.
