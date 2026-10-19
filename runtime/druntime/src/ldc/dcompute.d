@@ -205,6 +205,16 @@ enum fragment = _shader(ShaderStage.fragment);
  +/
 enum vertex = _shader(ShaderStage.vertex);
 
+/// The shader profiles an entry point, or every entry point of a module
+/// (`@profiles(...) module m;`), is built for: profile names, comma-separated.
+/// A shader library provides the constructor that names them (its
+/// `profiles(...)`); the compiler only emits, in a compilation for a profile
+/// (`-mdcompute-profile`), the entry points that list it.
+struct _profiles
+{
+    string names;
+}
+
 /// The built-in variables a stage reads or writes (SPIR-V `BuiltIn`).
 enum Builtin : int
 {

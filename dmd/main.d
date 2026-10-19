@@ -743,6 +743,15 @@ version (IN_LLVM) {} else
     if (global.errors)
         removeHdrFilesAndFail(params, modules);
 
+    version (IN_LLVM)
+    {
+        // `-mdcompute-manifest`: the shader entry points and their profiles
+        // follow from declarations alone, so the compilation stops here.
+        import gen.semantic : writeDComputeManifest;
+        if (writeDComputeManifest(modules))
+            return global.errors ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+
     // Do pass 3 semantic analysis
     foreach (m; modules)
     {

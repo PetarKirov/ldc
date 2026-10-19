@@ -52,7 +52,7 @@ struct Varyings
     float2 uv;
 }
 
-@vertex Varyings tri(@builtin(Builtin.vertexIndex) int vertex,
+@_profiles("vulkan1.3") @vertex Varyings tri(@builtin(Builtin.vertexIndex) int vertex,
                      @builtin(Builtin.instanceIndex) int instance,
                      @input float2 corner, @input int2 cell)
 {
@@ -66,7 +66,7 @@ struct Varyings
     return v;
 }
 
-@fragment float4 shade(@input float4 colour, @input float2 uv)
+@_profiles("vulkan1.3") @fragment float4 shade(@input float4 colour, @input float2 uv)
 {
     return colour * uv[0];
 }
