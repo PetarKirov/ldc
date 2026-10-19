@@ -721,6 +721,15 @@ bool hasShaderUniformUDA(Dsymbol *sym) {
   return getMagicAttribute(sym, Id::udaShaderUniform, Id::dcompute) != nullptr;
 }
 
+/// The `Builtin` named by an `@ldc.dcompute._builtin` UDA on `sym`, or -1.
+int getShaderBuiltinUDA(Dsymbol *sym) {
+  auto sle = getMagicAttribute(sym, Id::udaShaderBuiltin, Id::dcompute);
+  if (!sle)
+    return -1;
+  checkStructElems(sle, {Type::tint32});
+  return static_cast<int>(toInteger((*sle->elements)[0]));
+}
+
 /// Check whether `fd` has the `@ldc.attributes.noSplitStack` UDA applied.
 bool hasNoSplitStackUDA(FuncDeclaration *fd) {
   auto sle = getMagicAttribute(fd, Id::udaNoSplitStack, Id::attributes);

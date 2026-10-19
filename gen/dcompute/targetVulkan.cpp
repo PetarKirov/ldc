@@ -280,11 +280,16 @@ public:
   /// emits, which the backend recognises as needing no Linkage capability.
   llvm::GlobalVariable *buildInterfaceVariable(llvm::Type *ty, unsigned addrSpace,
                                                bool isConstant, llvm::StringRef name,
-                                               unsigned location) {
-    // Two entry points in one module naming the same varying share one
-    // variable: the name is the contract with the vertex stage (GLSL links
-    // `in`/`out` by name), and an LLVM-renamed duplicate would break it.
-    if (auto *existing = _ir->module.getGlobalVariable(name, true)) {
+                                               unsigned location,
+                                               llvm::StringRef llvmName = {}) {
+    // Two entry points of one stage naming the same varying share one
+    // variable: the name is the contract with the other stage (GLSL links
+    // `in`/`out` by name), and an LLVM-renamed duplicate would break it. A
+    // stage whose variables' LLVM names are qualified (`llvmName`) carries
+    // the name in `spirv.Name`.
+    if (llvmName.empty())
+      llvmName = name;
+    if (auto *existing = _ir->module.getGlobalVariable(llvmName, true)) {
       if (existing->getValueType() == ty &&
           existing->getAddressSpace() == addrSpace)
         return existing;
@@ -294,10 +299,13 @@ public:
     }
     auto *gv = new llvm::GlobalVariable(
         _ir->module, ty, isConstant, llvm::GlobalValue::ExternalLinkage, nullptr,
-        name, nullptr, llvm::GlobalValue::GeneralDynamicTLSModel, addrSpace,
+        llvmName, nullptr, llvm::GlobalValue::GeneralDynamicTLSModel, addrSpace,
         /*isExternallyInitialized=*/true);
     gv->setVisibility(llvm::GlobalValue::HiddenVisibility);
     decorateLocation(gv, location);
+    if (llvmName != name)
+      gv->addMetadata("spirv.Name",
+                      *llvm::MDNode::get(ctx, {llvm::MDString::get(ctx, name)}));
     return gv;
   }
 
@@ -331,15 +339,15 @@ public:
   };
   llvm::StringMap<InterfaceUse> interfaceUses;
 
-  void recordInterfaceUse(VarDeclaration *vd, const char *entry,
-                          const char *kind, int ordinal) {
+  void recordInterfaceUse(const std::string &key, VarDeclaration *vd,
+                          const char *entry, const char *kind, int ordinal) {
     const char *name = vd->ident->toChars();
     // `in float` and `float` are one interface type; two structs of one name
     // from two modules are not.
     const char *type =
         unSharedOf(mutableOf(vd->type->toBasetype()))->toPrettyChars(true);
     auto inserted = interfaceUses.try_emplace(
-        name, InterfaceUse{kind, ordinal, type, entry});
+        key, InterfaceUse{kind, ordinal, type, entry});
     if (inserted.second)
       return;
     const InterfaceUse &first = inserted.first->second;
@@ -395,7 +403,7 @@ public:
   // `fromInterface` converts a loaded value back to the D type. (Integers are
   // signed module-wide, by the `spirv.signed-integers` flag.)
 
-  enum class Crossing { varying, output, uniform };
+  enum class Crossing { varying, vertexInput, output, uniform };
 
   /// Why `t` cannot cross as `crossing`, or null if it can.
   static const char *refusal(Type *t, Crossing crossing) {
@@ -412,7 +420,7 @@ public:
     case TY::Tfloat32:
       return nullptr;
     case TY::Tint32:
-      return crossing == Crossing::uniform
+      return crossing == Crossing::uniform || crossing == Crossing::vertexInput
                  ? nullptr
                  : "an integer cannot be interpolated; pass it as a `@uniform`";
     case TY::Tvector: {
@@ -680,13 +688,122 @@ public:
     return buildResourceHandle(builder, samplerTy, /*binding=*/0, "sampler");
   }
 
-  void addShaderEntry(FuncDeclaration *fd, llvm::Function *llf,
-                      StructLiteralExp *shaderAttr) override {
-    const auto stage = toInteger((*shaderAttr->elements)[0]);
-    if (stage != 0) {
-      error(fd->loc, "unsupported shader stage %d", static_cast<int>(stage));
+  // ---- stages and built-ins -----------------------------------------------
+
+  enum class Stage { fragment = 0, vertex = 1 };
+
+  static const char *stageAttr(Stage s) {
+    return s == Stage::vertex ? "`@vertex`" : "`@fragment`";
+  }
+
+  /// A built-in variable of `ldc.dcompute.Builtin`: its stage, direction, D
+  /// type and SPIR-V `BuiltIn`.
+  struct BuiltinVariable {
+    const char *name;
+    Stage stage;
+    bool output;
+    unsigned spirv;
+    bool isFloat4; // else `int`
+  };
+
+  static const BuiltinVariable *builtinVariable(int b) {
+    static const BuiltinVariable table[] = {
+        {"vertexIndex", Stage::vertex, false, 42, false},
+        {"instanceIndex", Stage::vertex, false, 43, false},
+        {"position", Stage::vertex, true, 0, true},
+    };
+    return b >= 0 && b < 3 ? &table[b] : nullptr;
+  }
+
+  static bool isFloat4(Type *t) {
+    t = t->toBasetype();
+    auto *tv = t->ty == TY::Tvector ? static_cast<TypeVector *>(t) : nullptr;
+    return tv && tv->elementType()->ty == TY::Tfloat32 &&
+           toInteger(static_cast<TypeSArray *>(tv->basetype)->dim) == 4;
+  }
+
+  /// Checks that `vd`, marked `@builtin(b)` as `what` of a `stage` entry
+  /// point, reads or writes `b` in its stage, direction and type.
+  const BuiltinVariable &checkBuiltin(VarDeclaration *vd, int b,
+                                      const char *what, Stage stage,
+                                      bool output) {
+    const BuiltinVariable *v = builtinVariable(b);
+    if (!v) {
+      error(vd->loc, "%s %s `%s` names an unknown built-in, %d", stageAttr(stage),
+            what, vd->ident->toChars(), b);
       fatal();
     }
+    if (v->stage != stage) {
+      error(vd->loc, "built-in `%s` of %s %s `%s` is a %s-stage built-in",
+            v->name, stageAttr(stage), what, vd->ident->toChars(),
+            v->stage == Stage::vertex ? "vertex" : "fragment");
+      fatal();
+    }
+    if (v->output != output) {
+      error(vd->loc, "built-in `%s` of %s %s `%s` is an %s, not an %s", v->name,
+            stageAttr(stage), what, vd->ident->toChars(),
+            v->output ? "output" : "input", output ? "output" : "input");
+      fatal();
+    }
+    Type *t = vd->type->toBasetype();
+    if (v->isFloat4 ? !isFloat4(t) : t->ty != TY::Tint32) {
+      error(vd->loc, "built-in `%s` of %s %s `%s` is `%s`, not `%s`", v->name,
+            stageAttr(stage), what, vd->ident->toChars(),
+            v->isFloat4 ? "__vector(float[4])" : "int", vd->type->toChars());
+      fatal();
+    }
+    return *v;
+  }
+
+  /// The module's variable for a built-in: `Input` or `Output` storage,
+  /// decorated `BuiltIn`, one per built-in however many entry points use it.
+  llvm::GlobalVariable *builtinGlobal(const BuiltinVariable &v, llvm::Type *ty) {
+    const std::string llvmName = std::string("builtin.") + v.name;
+    if (auto *existing = _ir->module.getGlobalVariable(llvmName, true))
+      return existing;
+    auto *gv = new llvm::GlobalVariable(
+        _ir->module, ty, /*isConstant=*/!v.output,
+        llvm::GlobalValue::ExternalLinkage, nullptr, llvmName, nullptr,
+        llvm::GlobalValue::GeneralDynamicTLSModel, v.output ? 8 : 7,
+        /*isExternallyInitialized=*/!v.output);
+    gv->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    auto *i32 = getI32Type();
+    llvm::Metadata *pair[] = {
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32, 11)), // BuiltIn
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32, v.spirv))};
+    gv->addMetadata("spirv.Decorations",
+                    *llvm::MDNode::get(ctx, {llvm::MDNode::get(ctx, pair)}));
+    gv->addMetadata("spirv.Name",
+                    *llvm::MDNode::get(ctx, {llvm::MDString::get(ctx, v.name)}));
+    return gv;
+  }
+
+  /// The LLVM name of a stage's interface variable. A fragment stage's are
+  /// its names; a vertex stage's are qualified, since its outputs share their
+  /// names with the fragment inputs they feed, and carry the name in
+  /// `spirv.Name`.
+  static std::string interfaceGlobalName(Stage stage, llvm::StringRef name,
+                                         bool output) {
+    if (stage == Stage::fragment)
+      return name.str();
+    return (name + (output ? ".vertex.out" : ".vertex.in")).str();
+  }
+
+  /// The key of an interface name in `interfaceUses`: one variable across the
+  /// entry points of one stage.
+  static std::string interfaceKey(Stage stage, llvm::StringRef name) {
+    return stage == Stage::fragment ? name.str() : ("vertex " + name).str();
+  }
+
+  void addShaderEntry(FuncDeclaration *fd, llvm::Function *llf,
+                      StructLiteralExp *shaderAttr) override {
+    const auto stageValue = toInteger((*shaderAttr->elements)[0]);
+    if (stageValue != 0 && stageValue != 1) {
+      error(fd->loc, "unsupported shader stage %d", static_cast<int>(stageValue));
+      fatal();
+    }
+    const Stage stage = static_cast<Stage>(stageValue);
+    const char *attr = stageAttr(stage);
 
     // The entry point is named after the D function so a consumer can pick
     // it by `--entry`; the D function itself becomes an internal helper that
@@ -695,9 +812,9 @@ public:
     auto prior = entryPoints.try_emplace(fd->ident->toChars(), fd);
     if (!prior.second) {
       error(fd->loc,
-            "`@fragment` entry point `%s` is defined by both `%s` and `%s`; an "
+            "%s entry point `%s` is defined by both `%s` and `%s`; an "
             "entry point's name must be unique across the module",
-            fd->ident->toChars(), prior.first->second->toPrettyChars(),
+            attr, fd->ident->toChars(), prior.first->second->toPrettyChars(),
             fd->toPrettyChars());
       fatal();
     }
@@ -706,7 +823,7 @@ public:
     auto *f = llvm::Function::Create(void_func_void,
                                      llvm::GlobalValue::ExternalLinkage,
                                      fd->ident->toChars(), _ir->module);
-    f->addFnAttr("hlsl.shader", "pixel");
+    f->addFnAttr("hlsl.shader", stage == Stage::vertex ? "vertex" : "pixel");
     llf->setLinkage(llvm::GlobalValue::InternalLinkage);
     llf->addFnAttr(llvm::Attribute::AlwaysInline);
 
@@ -714,82 +831,126 @@ public:
     llvm::IRBuilder<> builder(ctx);
     builder.SetInsertPoint(bb);
 
-    llvm::FunctionType *tf = llf->getFunctionType();
-    const size_t nparams = fd->parameters ? fd->parameters->length : 0;
-    if (tf->getNumParams() != nparams) {
-      error(fd->loc, "`@fragment` function parameters cannot be rewritten "
-                     "by the ABI; use vector, scalar, or `Sampler2D` parameters");
-      fatal();
-    }
-
     const char *entry = fd->ident->toChars();
     Type *ret = fd->type->nextOf()->toBasetype();
-    if (ret->ty != TY::Tvoid) {
+    StructDeclaration *result = nullptr;
+    if (stage == Stage::vertex) {
+      if (ret->ty != TY::Tstruct) {
+        error(fd->loc,
+              "%s function `%s` cannot return `%s`: a vertex entry point "
+              "returns a struct with a position",
+              attr, entry, ret->toChars());
+        fatal();
+      }
+      result = static_cast<TypeStruct *>(ret)->sym;
+    } else if (ret->ty != TY::Tvoid) {
       if (const char *why = refusal(ret, Crossing::output)) {
-        error(fd->loc, "`@fragment` function `%s` cannot return `%s`: %s",
-              entry, ret->toChars(), why);
+        error(fd->loc, "%s function `%s` cannot return `%s`: %s", attr, entry,
+              ret->toChars(), why);
         fatal();
       }
     }
 
+    // A struct result comes back through a hidden first parameter (`sret`).
+    llvm::FunctionType *tf = llf->getFunctionType();
+    const size_t nparams = fd->parameters ? fd->parameters->length : 0;
+    const unsigned first =
+        tf->getNumParams() == nparams + 1 && llf->hasParamAttribute(0, llvm::Attribute::StructRet)
+            ? 1
+            : 0;
+    if (tf->getNumParams() != nparams + first) {
+      error(fd->loc, "%s function parameters cannot be rewritten "
+                     "by the ABI; use vector, scalar, or `Sampler2D` parameters",
+            attr);
+      fatal();
+    }
+
     unsigned nextLocation = 0;
     unsigned nextImageBinding = 1;
-    llvm::SmallVector<llvm::Value *, 8> args(nparams);
+    llvm::SmallVector<llvm::Value *, 8> args(nparams + first);
+    llvm::AllocaInst *resultSlot = nullptr;
+    if (first) {
+      resultSlot = builder.CreateAlloca(DtoType(ret), nullptr, "result");
+      args[0] = resultSlot;
+    }
     for (size_t i = 0; i < nparams; i++) {
       VarDeclaration *vd = (*fd->parameters)[i];
-      llvm::Type *pt = tf->getParamType(i);
+      llvm::Type *pt = tf->getParamType(i + first);
       const char *name = vd->ident->toChars();
       Type *dty = vd->type->toBasetype();
       StructDeclaration *sd =
           dty->ty == TY::Tstruct ? static_cast<TypeStruct *>(dty)->sym : nullptr;
       const bool isInput = hasShaderInputUDA(vd);
       const bool isUniform = hasShaderUniformUDA(vd);
+      const int builtinId = getShaderBuiltinUDA(vd);
+      const bool isBuiltin = builtinId >= 0;
       const bool isImage =
           sd && sd->ident == Id::dcSampler2D && isFromLDC_DCompute(sd);
+      if (isBuiltin && (isInput || isUniform)) {
+        error(vd->loc,
+              "%s parameter `%s` is marked both `@builtin` and `%s`; it must "
+              "be one",
+              attr, name, isInput ? "@input" : "@uniform");
+        fatal();
+      }
       if (isInput && isUniform) {
         error(vd->loc,
-              "`@fragment` parameter `%s` is marked both `@input` and "
+              "%s parameter `%s` is marked both `@input` and "
               "`@uniform`; it must be one",
-              name);
+              attr, name);
         fatal();
       }
       if ((isInput || isUniform) && isImage) {
         error(vd->loc,
-              "`@fragment` parameter `%s` is a `Sampler2D`, which takes no "
+              "%s parameter `%s` is a `Sampler2D`, which takes no "
               "`@input` or `@uniform` marker",
-              name);
+              attr, name);
         fatal();
       }
+      if (isBuiltin) {
+        const BuiltinVariable &v =
+            checkBuiltin(vd, builtinId, "parameter", stage, /*output=*/false);
+        llvm::Type *it = DtoType(dty);
+        args[i + first] = builder.CreateLoad(it, builtinGlobal(v, it), name);
+        continue;
+      }
       if (isInput || isUniform) {
-        const auto crossing = isInput ? Crossing::varying : Crossing::uniform;
+        const auto crossing =
+            isUniform ? Crossing::uniform
+                      : stage == Stage::vertex ? Crossing::vertexInput
+                                               : Crossing::varying;
         if (const char *why = refusal(dty, crossing)) {
-          error(vd->loc, "`@fragment` parameter `%s` cannot be `%s`: %s", name,
+          error(vd->loc, "%s parameter `%s` cannot be `%s`: %s", attr, name,
                 vd->type->toChars(), why);
           fatal();
         }
       }
-      checkTranslatable(vd, "`@fragment` parameter", isUniform ? dty : nullptr);
+      checkTranslatable(vd, stage == Stage::vertex ? "`@vertex` parameter"
+                                                   : "`@fragment` parameter",
+                        isUniform ? dty : nullptr);
 
+      const std::string key = interfaceKey(stage, name);
       if (isInput) {
-        recordInterfaceUse(vd, entry, "input", nextLocation);
+        recordInterfaceUse(key, vd, entry, "input", nextLocation);
         llvm::Type *it = DtoType(dty);
-        auto *gv = buildInterfaceVariable(it, /*Input*/ 7, /*isConstant=*/true,
-                                          name, nextLocation++);
-        args[i] = builder.CreateLoad(it, gv, name);
+        auto *gv = buildInterfaceVariable(
+            it, /*Input*/ 7, /*isConstant=*/true, name, nextLocation++,
+            interfaceGlobalName(stage, name, /*output=*/false));
+        args[i + first] = builder.CreateLoad(it, gv, name);
       } else if (isUniform) {
-        recordInterfaceUse(vd, entry, "uniform", -1);
+        recordInterfaceUse(key, vd, entry, "uniform", -1);
         llvm::Type *it = interfaceType(dty);
         llvm::Value *v = builder.CreateLoad(it, buildUniform(it, name), name);
-        args[i] = asArgument(builder, fromInterface(builder, v, dty), pt);
+        args[i + first] = asArgument(builder, fromInterface(builder, v, dty), pt);
       } else if (isImage) {
         // Binding 0 is the shared sampler; images take the bindings after it.
-        recordInterfaceUse(vd, entry, "image", nextImageBinding);
-        args[i] = buildResourceHandle(builder, pt, nextImageBinding++, name);
+        recordInterfaceUse(key, vd, entry, "image", nextImageBinding);
+        args[i + first] = buildResourceHandle(builder, pt, nextImageBinding++, name);
       } else {
         error(vd->loc,
-              "`@fragment` parameter `%s` must be marked `@input` or "
-              "`@uniform`, or be a `Sampler2D`",
-              name);
+              "%s parameter `%s` must be marked `@input`, `@uniform` or "
+              "`@builtin`, or be a `Sampler2D`",
+              attr, name);
         fatal();
       }
     }
@@ -798,15 +959,77 @@ public:
     // The helper is SPIR_FUNC; a call with the default convention would be
     // a mismatch LLVM's inliner refuses to fold and the verifier flags.
     call->setCallingConv(llf->getCallingConv());
-    llvm::Value *result = call;
-    if (!tf->getReturnType()->isVoidTy()) {
+    if (result) {
+      storeVertexResult(builder, fd, result, ret, resultSlot, call);
+    } else if (!tf->getReturnType()->isVoidTy()) {
       auto *out = buildInterfaceVariable(tf->getReturnType(), /*Output*/ 8,
                                          /*isConstant=*/false, "finalColor",
                                          /*location=*/0);
-      builder.CreateStore(result, out);
+      builder.CreateStore(call, out);
     }
     builder.CreateRetVoid();
     IF_LOG Logger::cout() << *f << std::endl;
+  }
+
+  /// Writes a `@vertex` result's fields to the stage's outputs: the
+  /// `@builtin(Builtin.position)` field to `Position`, every other field to
+  /// an output named after it, at locations in field order.
+  void storeVertexResult(llvm::IRBuilder<> &builder, FuncDeclaration *fd,
+                         StructDeclaration *sd, Type *ret,
+                         llvm::AllocaInst *slot, llvm::CallInst *call) {
+    const char *entry = fd->ident->toChars();
+    llvm::Type *structTy = DtoType(ret);
+    llvm::Value *value =
+        slot ? static_cast<llvm::Value *>(builder.CreateLoad(structTy, slot))
+             : call;
+    auto *aggr = getIrType(ret)->isAggr();
+    VarDeclaration *position = nullptr;
+    unsigned nextLocation = 0;
+    for (VarDeclaration *field : sd->fields) {
+      const char *name = field->ident->toChars();
+      bool isFieldIdx;
+      const unsigned index = aggr->getMemberLocation(field, isFieldIdx);
+      if (!isFieldIdx) {
+        error(field->loc, "`@vertex` result `%s` has overlapping field `%s`",
+              sd->toChars(), name);
+        fatal();
+      }
+      llvm::Value *v = builder.CreateExtractValue(value, index, name);
+      const int builtinId = getShaderBuiltinUDA(field);
+      if (builtinId >= 0) {
+        const BuiltinVariable &b = checkBuiltin(field, builtinId, "result field",
+                                                Stage::vertex, /*output=*/true);
+        if (position) {
+          error(field->loc,
+                "`@vertex` result field `%s` is a second "
+                "`@builtin(Builtin.position)`; `%s` is the first",
+                name, position->ident->toChars());
+          fatal();
+        }
+        position = field;
+        builder.CreateStore(v, builtinGlobal(b, v->getType()));
+        continue;
+      }
+      if (const char *why = refusal(field->type, Crossing::varying)) {
+        error(field->loc, "`@vertex` result field `%s` cannot be `%s`: %s", name,
+              field->type->toChars(), why);
+        fatal();
+      }
+      checkTranslatable(field, "`@vertex` result field");
+      recordInterfaceUse(interfaceKey(Stage::vertex, name), field, entry,
+                         "output", nextLocation);
+      auto *gv = buildInterfaceVariable(
+          v->getType(), /*Output*/ 8, /*isConstant=*/false, name, nextLocation++,
+          interfaceGlobalName(Stage::vertex, name, /*output=*/true));
+      builder.CreateStore(v, gv);
+    }
+    if (!position) {
+      error(fd->loc,
+            "`@vertex` function `%s` returns `%s`, which has no field marked "
+            "`@builtin(Builtin.position)`",
+            entry, sd->toChars());
+      fatal();
+    }
   }
 };
 } // anonymous namespace.
