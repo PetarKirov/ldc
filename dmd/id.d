@@ -593,6 +593,7 @@ immutable Msgtable[] msgtable =
     { "udaShader", "_shader" },
     { "udaShaderInput", "_input" },
     { "udaShaderUniform", "_uniform" },
+    { "udaShaderBuiltin", "_builtin" },
     { "udaDynamicCompile", "_dynamicCompile" },
     { "udaDynamicCompileConst", "_dynamicCompileConst" },
     { "udaDynamicCompileEmit", "_dynamicCompileEmit" },

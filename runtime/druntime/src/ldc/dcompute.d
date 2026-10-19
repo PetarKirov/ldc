@@ -162,6 +162,7 @@ alias Constant(T) = immutable     Variable!(AddrSpace.Constant, T);
 enum ShaderStage : int
 {
     fragment = 0,
+    vertex = 1,
 }
 
 /// ditto
@@ -172,6 +173,58 @@ private struct _shader
 
 /// ditto
 enum fragment = _shader(ShaderStage.fragment);
+
+/++
+ + `@vertex` marks a function in a `@compute` module as a vertex shader entry
+ + point. Its `@input` parameters are its vertex attributes, at locations in
+ + parameter order, and its `@builtin` parameters the stage's built-in inputs.
+ + It returns a struct: the field marked `@builtin(Builtin.position)` is the
+ + clip-space position, and every other field an output named after it, at
+ + locations in field order, which a fragment entry point reads as the
+ + `@input` of the same name.
+ +
+ + Examples:
+ + ---
+ + struct Varyings
+ + {
+ +     @builtin(Builtin.position) __vector(float[4]) position;
+ +     __vector(float[4]) colour;
+ + }
+ +
+ + @vertex Varyings tri(@builtin(Builtin.vertexIndex) int index,
+ +     @input __vector(float[2]) corner)
+ + {
+ +     Varyings v;
+ +     v.position = __vector(float[4])(1.0f);
+ +     v.position[0] = corner[0];
+ +     v.position[1] = corner[1];
+ +     v.colour = __vector(float[4])(cast(float) index);
+ +     return v;
+ + }
+ + ---
+ +/
+enum vertex = _shader(ShaderStage.vertex);
+
+/// The built-in variables a stage reads or writes (SPIR-V `BuiltIn`).
+enum Builtin : int
+{
+    /// The index of the vertex being processed: an `int` vertex input.
+    vertexIndex = 0,
+    /// The index of the instance being drawn: an `int` vertex input.
+    instanceIndex = 1,
+    /// The clip-space position: a `__vector(float[4])` vertex output.
+    position = 2,
+}
+
+/// Marks a parameter, or a field of a `@vertex` result, as the built-in
+/// variable `variable`: `@builtin(Builtin.vertexIndex)`.
+struct _builtin
+{
+    Builtin variable;
+}
+
+/// ditto
+alias builtin = _builtin;
 
 /// Marks a `@fragment` parameter as an interface input (a varying).
 private struct _input {}
