@@ -814,9 +814,14 @@ public:
         break;
       }
       case ShaderVariableKind::builtinInput: {
-        llvm::Type *it = DtoType(dty);
+        // A `bool` built-in (`FrontFacing`) is SPIR-V's `OpTypeBool`, which
+        // LLVM spells `i1`; D passes a `bool` as a wider integer.
+        const bool isBool = dty->ty == TY::Tbool;
+        llvm::Type *it = isBool ? llvm::Type::getInt1Ty(ctx) : DtoType(dty);
         value = builder.CreateLoad(
             it, builtinVariable(it, false, v.name, v.ordinal), v.name);
+        if (isBool)
+          value = builder.CreateZExt(value, pt);
         break;
       }
       case ShaderVariableKind::uniform: {

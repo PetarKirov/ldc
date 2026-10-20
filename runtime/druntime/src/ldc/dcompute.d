@@ -264,7 +264,9 @@ alias binding = _binding;
  +   $(LI `vertexStage`, `fragmentStage`: an entry point of that stage;)
  +   $(LI `uniformBlocks` without `looseUniforms`: resources lower to Vulkan's
  +        uniform and push-constant blocks, else to plain uniforms;)
- +   $(LI `intVertexInputs`: an integer vertex input.))
+ +   $(LI `intVertexInputs`: an integer vertex input;)
+ +   $(LI any of them: a function marked `@requires` with it that an emitted
+ +        entry point reaches, through the functions it calls.))
  +
  + Without a `shader` grant the compiler checks none of them, and resources
  + lower to plain uniforms. The grant is taken as given: its implications
@@ -285,6 +287,46 @@ enum Capability : int
     int8,                /// 8-bit integers
     float64,             /// 64-bit floats
     bufferDeviceAddress, /// buffer device addresses
+    derivatives,         /// screen-space derivatives (`OpDPdx`, `OpFwidth`)
+    derivativeControl,   /// coarse and fine derivatives (`DerivativeControl`)
+    demote,              /// demoting an invocation to a helper (`OpDemoteToHelperInvocation`)
+}
+
+/++
+ + Marks a function as needing `capabilities`: `@requires(Capability.derivatives)`.
+ +
+ + In a compilation granted `shader` capabilities, an entry point the
+ + compilation emits fails it if it reaches such a function, through the
+ + functions it calls, without being granted every capability the function
+ + needs; the diagnostic names the chain of calls. An entry point is granted
+ + the compilation's capabilities, but, of the stages, only its own: a
+ + `@vertex` entry point reaching a function that `@requires(fragmentStage)`
+ + fails even where the profile grants both stages. A function no emitted
+ + entry point reaches is not checked.
+ +/
+struct _requires
+{
+    Capability[] capabilities;
+}
+
+/// ditto
+_requires requires(Capability[] capabilities...) => _requires(capabilities.dup);
+
+/++
+ + What a function compiles to where the compilation lacks `capability`: it
+ + returns its first argument, if it has one, so that it stands in for the
+ + value the function would compute.
+ +
+ + The body of every function is analysed in every compilation, including the
+ + helpers of entry points built for other targets, so a function that needs
+ + a capability selects this rather than failing (`static if`). An emitted
+ + entry point that reaches it fails the compilation, naming the chain of
+ + calls, like one that reaches a function marked `@requires(capability)`.
+ +/
+auto unsupported(Capability capability, T...)(T args)
+{
+    static if (T.length)
+        return args[0];
 }
 
 /// The built-in variables a stage reads or writes (SPIR-V `BuiltIn`).
@@ -296,6 +338,13 @@ enum Builtin : int
     instanceIndex = 1,
     /// The clip-space position: a `__vector(float[4])` vertex output.
     position = 2,
+    /// The fragment's window position, its centre at `+0.5`, its depth and
+    /// `1/w`: a `__vector(float[4])` fragment input. Its origin is the
+    /// target's: SPIR-V for Vulkan puts it at the upper left.
+    fragCoord = 3,
+    /// Whether the fragment's primitive faces the viewer, as the pipeline's
+    /// front-face state decides: a `bool` fragment input.
+    frontFacing = 4,
 }
 
 /// Marks a parameter, or a field of a `@vertex` result, as the built-in
