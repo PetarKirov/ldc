@@ -3,7 +3,7 @@
 // are two variables, each named so in SPIR-V.
 
 // REQUIRES: target_SPIRV && atleast_llvm23
-// RUN: %ldc -O2 -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -mdcompute-file-prefix=vk_names -output-o %s
+// RUN: %ldc -O2 -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -mdcompute-file-prefix=vk_names -output-o %s
 // RUN: spirv-val --target-env vulkan1.3 vk_names_vulkan130_64.spv
 // RUN: spirv-dis vk_names_vulkan130_64.spv -o - | FileCheck %s
 

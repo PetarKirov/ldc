@@ -1,4 +1,4 @@
-// On OpenGL (`-mdcompute-resources=loose`, the default) a block is one plain
+// On OpenGL (`-capabilities=shader:shader,fragmentStage,looseUniforms,sampledImages`, the default) a block is one plain
 // uniform per field of its `T`, named after the field, and a `@uniform`
 // stays a plain uniform.
 
