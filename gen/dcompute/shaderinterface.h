@@ -81,3 +81,7 @@ unsigned shaderBlockSize(Type *t, int rule);
 unsigned shaderBlockAlignment(Type *t, int rule);
 unsigned shaderBlockFieldOffset(StructDeclaration *sd, size_t index, int rule);
 unsigned shaderBlockArrayStride(Type *element, int rule);
+
+/// The type a value of D type `t` has at a shader's interface: its base
+/// type, or, for a struct marked `@vectorType`, its vector's.
+Type *shaderType(Type *t);
