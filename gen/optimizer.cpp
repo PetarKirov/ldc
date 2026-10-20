@@ -64,6 +64,7 @@
 #include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 #include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
 #include "llvm/Transforms/Scalar/StructurizeCFG.h"
 #include "llvm/Transforms/Utils/FixIrreducible.h"
 #include "llvm/Transforms/Utils/UnifyLoopExits.h"
@@ -608,7 +609,9 @@ bool ldc_optimize_module(llvm::Module *M, llvm::TargetMachine *TM) {
       // still the always-inliner plus SROA/mem2reg: a shader entry point's
       // helper (the `@fragment` function) must fold into it so that no
       // opaque image/sampler handle ends up in a Function-storage variable,
-      // which Vulkan forbids.
+      // which Vulkan forbids. InstSimplify then reads each handle straight
+      // from its binding, not through the `@resources` aggregate it was
+      // inserted into: the backend needs the binding call itself.
       llvm::LoopAnalysisManager LAM;
       llvm::FunctionAnalysisManager FAM;
       llvm::CGSCCAnalysisManager CGAM;
@@ -631,6 +634,7 @@ bool ldc_optimize_module(llvm::Module *M, llvm::TargetMachine *TM) {
         llvm::FunctionPassManager FPM;
         FPM.addPass(llvm::SROAPass(llvm::SROAOptions(llvm::SROAOptions::ModifyCFG)));
         FPM.addPass(llvm::PromotePass());
+        FPM.addPass(llvm::InstSimplifyPass());
         MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
       }
       // A shader's control flow must be structured, and D's is not, nor what
