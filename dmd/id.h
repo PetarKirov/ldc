@@ -49,6 +49,7 @@ struct Id
     static Identifier *dcUniformBlock;
     static Identifier *dcPushConstants;
     static Identifier *dcCapability;
+    static Identifier *dcUnsupported;
     static Identifier *dcSharedSampler;
     static Identifier *object;
     static Identifier *core;
@@ -112,6 +113,7 @@ struct Id
     static Identifier *udaShaderProfiles;
     static Identifier *udaShaderResources;
     static Identifier *udaShaderBinding;
+    static Identifier *udaShaderRequires;
     static Identifier *udaCompute;
     static Identifier *udaDynamicCompile;
     static Identifier *udaDynamicCompileConst;

@@ -597,6 +597,7 @@ immutable Msgtable[] msgtable =
     { "udaShaderProfiles", "_profiles" },
     { "udaShaderResources", "_resources" },
     { "udaShaderBinding", "_binding" },
+    { "udaShaderRequires", "_requires" },
     { "udaDynamicCompile", "_dynamicCompile" },
     { "udaDynamicCompileConst", "_dynamicCompileConst" },
     { "udaDynamicCompileEmit", "_dynamicCompileEmit" },
@@ -613,6 +614,7 @@ immutable Msgtable[] msgtable =
     { "dcUniformBlock", "UniformBlock" },
     { "dcPushConstants", "PushConstants" },
     { "dcCapability", "Capability" },
+    { "dcUnsupported", "unsupported" },
     { "dcSharedSampler", "__spirv_shared_sampler" },
     { "dcReflect", "__dcompute_reflect" },
     // dcompute array comparison/equality lowering hooks
