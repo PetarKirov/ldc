@@ -708,9 +708,11 @@ void recordInterfaceUse(ShaderStage stage, VarDeclaration vd, const(char)* entry
     import dmd.typesem : mutableOf, unSharedOf;
 
     const name = vd.ident.toChars();
-    // One variable per name and stage: a vertex output and the fragment input
-    // it feeds share their name.
-    const key = (stage == ShaderStage.vertex ? "vertex " : "") ~ vd.ident.toString().idup;
+    // One variable per stage, direction and name (`SHF2`): a vertex output and
+    // the fragment input it feeds share their name, and so may a vertex
+    // stage's input and output.
+    const key = (stage == ShaderStage.vertex ? "vertex " : "")
+        ~ (strcmp(kind, "output") == 0 ? "out " : "in ") ~ vd.ident.toString().idup;
     // `in float` and `float` are one interface type; two structs of one name
     // from two modules are not.
     const type = unSharedOf(mutableOf(vd.type.toBasetype())).toPrettyChars(true);
@@ -734,7 +736,8 @@ void recordInterfaceUse(ShaderStage stage, VarDeclaration vd, const(char)* entry
     }
     if (first.ordinal != ordinal)
     {
-        const what = strcmp(kind, "image") == 0 ? "binding" : "location";
+        const what = strcmp(kind, "image") == 0 || strcmp(kind, "uniform block") == 0
+            ? "binding" : "location";
         error(vd.loc, "shader %s `%s` is at %s %d in `%s` but %s %d in `%s`; an interface name is one variable across the module, so every entry point must give it the same %s",
             kind, name, what.ptr, ordinal, entry, what.ptr, first.ordinal, first.entry, what.ptr);
         fatal();
@@ -914,6 +917,12 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
     it.fixedBinding = fixed;
     if (isResources)
     {
+        if (path.length == ShaderVariable.init.path.length)
+        {
+            error(vd.loc, "%s %s `%s` nests `@resources` structs %d deep, more than the %d the compiler supports",
+                attr, what, name, cast(int) path.length + 1, cast(int) path.length);
+            fatal();
+        }
         foreach (k, field; ts.sym.fields)
             collectItems(field, parameter, path ~ cast(int) k, attr, stage, items);
         return;
@@ -1099,48 +1108,65 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
     int nextLocation = 0;
 
     // Bindings (`SHR7`). OpenGL: the shared sampler at 0, the images from 1
-    // in order. Vulkan: the sampler's 0 is reserved, a `@binding` fixes one,
-    // and the rest take the next free binding in order, the default uniform
-    // block at the place of the first `@uniform`.
-    bool[int] taken;
-    foreach (ref it; items)
-        if (it.fixedBinding >= 0)
-        {
-            if (it.fixedBinding == 0)
+    // in order, and `@binding` ignored. Vulkan: the sampler's 0 is reserved,
+    // a `@binding` fixes one, and the rest take the next free binding in
+    // order, the default uniform block at the place of the first `@uniform`.
+    VarDeclaration[int] taken;
+    if (blocks)
+        foreach (ref it; items)
+            if (it.fixedBinding >= 0)
             {
-                error(it.decl.loc, "%s resource `%s` cannot be at binding 0, which is the shared sampler's",
-                    attr, it.decl.ident.toChars());
-                fatal();
+                if (it.fixedBinding == 0)
+                {
+                    error(it.decl.loc, "%s resource `%s` cannot be at binding 0, which is the shared sampler's",
+                        attr, it.decl.ident.toChars());
+                    fatal();
+                }
+                if (auto other = it.fixedBinding in taken)
+                {
+                    error(it.decl.loc, "%s resources `%s` and `%s` are both at binding %d", attr,
+                        (*other).toPrettyChars(), it.decl.toPrettyChars(), it.fixedBinding);
+                    fatal();
+                }
+                taken[it.fixedBinding] = it.decl;
             }
-            if (auto other = it.fixedBinding in taken)
-            {
-                error(it.decl.loc, "%s resources `%s` and another are both at binding %d", attr,
-                    it.decl.ident.toChars(), it.fixedBinding);
-                fatal();
-            }
-            taken[it.fixedBinding] = true;
-        }
     int nextBinding = 1;
     int nextFreeBinding()
     {
         while (nextBinding in taken)
             nextBinding++;
-        taken[nextBinding] = true;
+        taken[nextBinding] = null;
         return nextBinding++;
     }
 
     // Every interface name of the entry point, as lowered, is distinct
-    // (`SHF2`).
-    VarDeclaration[string] names;
+    // (`SHF2`), the ones the compiler gives too: the fragment colour output
+    // and the default uniform block's variable and type.
+    const(char)*[string] names;
     void claim(const(char)[] name, VarDeclaration vd, VarDeclaration at = null)
     {
         if (auto prior = name in names)
         {
-            error((at ? at : vd).loc, "%s entry point `%s` has two interface variables named `%.*s`: `%s` and `%s`",
-                attr, entry, cast(int) name.length, name.ptr, prior.toPrettyChars(), vd.toPrettyChars());
+            error((at ? at : vd).loc, "%s entry point `%s` has two interface variables named `%.*s`: %s and `%s`",
+                attr, entry, cast(int) name.length, name.ptr, *prior, vd.toPrettyChars());
             fatal();
         }
-        names[name.idup] = vd;
+        names[name.idup] = ("`" ~ vd.toPrettyChars().toDString() ~ "`\0").ptr;
+    }
+    void reserve(const(char)[] name, string what)
+    {
+        names[name.idup] = (what ~ "\0").ptr;
+    }
+    if (stage == ShaderStage.fragment && ret.ty != TY.Tvoid)
+        reserve("finalColor", "the colour output");
+    bool anyUniform;
+    foreach (ref it; items)
+        anyUniform |= it.kind == ItemKind.uniform;
+    if (blocks && anyUniform)
+    {
+        const block = entry.toDString();
+        reserve(block ~ "Uniforms", "the default uniform block");
+        reserve(block ~ "UniformsBlock", "the default uniform block's type");
     }
 
     int defaultMembers = 0;
@@ -1174,7 +1200,8 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
             {
                 // A member of the entry point's default uniform block
                 // (`SHR3`), its own variable, so not an interface name of
-                // the stage.
+                // the stage; still a name of the entry point's interface.
+                claim(vd.ident.toString(), vd);
                 if (e.defaultBlockBinding < 0)
                     e.defaultBlockBinding = nextFreeBinding();
                 v.kind = ShaderVariableKind.defaultUniform;
@@ -1247,7 +1274,7 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
     }
 
     if (e.result)
-        describeVertexResult(fd, e.result, vars);
+        describeVertexResult(fd, e.result, vars, &claim);
 
     e.variables = vars.ptr;
     e.length = vars.length;
@@ -1257,7 +1284,8 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
 /// A `@vertex` result's fields: the `@builtin(Builtin.position)` field is the
 /// position, and every other field an output named after it, at locations in
 /// field order.
-void describeVertexResult(FuncDeclaration fd, StructDeclaration sd, ref ShaderVariable[] vars)
+void describeVertexResult(FuncDeclaration fd, StructDeclaration sd, ref ShaderVariable[] vars,
+    scope void delegate(const(char)[], VarDeclaration, VarDeclaration) claim)
 {
     const entry = fd.ident.toChars();
     VarDeclaration position;
@@ -1285,6 +1313,7 @@ void describeVertexResult(FuncDeclaration fd, StructDeclaration sd, ref ShaderVa
             fatal();
         }
         checkTranslatable(field, "`@vertex` result field");
+        claim(field.ident.toString(), field, null);
         recordInterfaceUse(ShaderStage.vertex, field, entry, "output", nextLocation);
         vars ~= ShaderVariable(ShaderVariableKind.output, field, -1, nextLocation++, name);
     }
