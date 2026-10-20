@@ -2981,6 +2981,28 @@ public:
         Expression e1 = interpret(&ue, e.e1, istate);
         if (exceptionOrCant(e1))
             return;
+        if (e.type.toBasetype().ty == Tvector && (e.op == EXP.negate || e.op == EXP.tilde))
+        {
+            // Negate or complement each element, as the operation on a vector means.
+            UnionExp ua = void;
+            auto ale = vectorElements(&ua, e1);
+            if (!ale)
+            {
+                error(e.loc, "`%s` cannot be interpreted at compile time", e.toChars());
+                result = CTFEExp.cantexp;
+                return;
+            }
+            auto elements = new Expressions(ale.elements.length);
+            foreach (i, ref element; *elements)
+            {
+                Expression x = ale[i];
+                element = (e.op == EXP.negate ? Neg(x.type, x) : Com(x.type, x)).copy();
+            }
+            auto arr = new ArrayLiteralExp(e.loc, ale.type, elements);
+            *pue = elementsToVector(e.loc, e.type, arr);
+            result = (*pue).exp();
+            return;
+        }
         switch (e.op)
         {
         case EXP.negate:
@@ -3112,6 +3134,8 @@ public:
         UnionExp evaluate(Loc loc, Type type, Expression e1, Expression e2)
         {
             UnionExp ue = void;
+            if (type.toBasetype().ty == Tvector)
+                return vectorOp(loc, type, fp, e1, e2);
             auto ae1 = e1.isArrayLiteralExp();
             auto ae2 = e2.isArrayLiteralExp();
             if (ae1 || ae2)
@@ -3527,7 +3551,16 @@ public:
                 }
                 oldval = resolveSlice(oldval);
 
-                newval = (*fp)(e.loc, e.type, oldval, newval).copy();
+                if (e.type.toBasetype().ty == Tvector)
+                    newval = vectorOp(e.loc, e.type, fp, oldval, newval).copy();
+                else
+                    newval = (*fp)(e.loc, e.type, oldval, newval).copy();
+                if (CTFEExp.isCantExp(newval))
+                {
+                    error(e.loc, "`%s` cannot be interpreted at compile time", e.toChars());
+                    result = CTFEExp.cantexp;
+                    return;
+                }
             }
             else if (e.e2.type.isIntegral() &&
                      (e.op == EXP.addAssign ||
@@ -4986,6 +5019,100 @@ public:
         return e;
     }
 
+    /*********************************************
+     * The elements of an interpreted vector value, as an array literal.
+     * Params:
+     *    pue = storage the array literal may be built in
+     *    e = an interpreted vector value: a `VectorExp`, or the array
+     *        literal (or, for a global, the slice of one) that a vector
+     *        initialized by an array initializer holds
+     * Returns:
+     *    the array literal, or null if `e` is not a vector value
+     */
+    static ArrayLiteralExp vectorElements(UnionExp* pue, Expression e)
+    {
+        if (e.isSliceExp())
+        {
+            e = resolveSlice(e, pue);
+            if (e == pue.exp())
+                e = pue.copy();
+        }
+        if (auto ale = e.isArrayLiteralExp())
+            return ale;
+        auto ve = e.isVectorExp();
+        if (!ve)
+            return null;
+        Expression ex = interpretVectorToArray(pue, ve);
+        if (ex == pue.exp())
+            ex = pue.copy();
+        return ex.isArrayLiteralExp();
+    }
+
+    /*********************************************
+     * Make an array literal of a vector's elements the vector value.
+     * Params:
+     *    loc = location of the result
+     *    type = the vector type
+     *    elements = the array literal of the elements
+     * Returns:
+     *    the vector, owned by CTFE
+     */
+    static UnionExp elementsToVector(Loc loc, Type type, Expression elements)
+    {
+        auto tv = type.toBasetype().isTypeVector();
+        if (auto ale = elements.isArrayLiteralExp())
+        {
+            ale.type = tv.basetype;
+            ale.ownedByCtfe = OwnedBy.ctfe;
+        }
+        UnionExp ue = void;
+        emplaceExp!(VectorExp)(&ue, loc, elements, tv);
+        auto ve = ue.exp().isVectorExp();
+        ve.type = type;
+        ve.dim = cast(uint) tv.basetype.isTypeSArray().dim.toInteger();
+        ve.ownedByCtfe = OwnedBy.ctfe;
+        return ue;
+    }
+
+    /*********************************************
+     * Perform the operation fp on each pair of elements of two vectors.
+     * Params:
+     *    loc = location of the result
+     *    type = the vector type of the result
+     *    fp = the operation on two elements
+     *    e1 = left operand, an interpreted vector value
+     *    e2 = right operand, an interpreted vector value
+     * Returns:
+     *    the resulting vector, or a CTFEExp if an operand is not a vector value
+     */
+    static UnionExp vectorOp(Loc loc, Type type, fp_t fp, Expression e1, Expression e2)
+    {
+        UnionExp ua1 = void;
+        UnionExp ua2 = void;
+        auto a1 = vectorElements(&ua1, e1);
+        auto a2 = vectorElements(&ua2, e2);
+        if (!a1 || !a2 || a1.elements.length != a2.elements.length)
+        {
+            UnionExp ue = void;
+            emplaceExp!CTFEExp(&ue, EXP.cantExpression);
+            return ue;
+        }
+        auto elements = new Expressions(a1.elements.length);
+        foreach (i, ref element; *elements)
+        {
+            Expression x1 = a1[i];
+            Expression x2 = a2[i];
+            if (x1.isConst() != 1 || x2.isConst() != 1)
+            {
+                UnionExp ue = void;
+                emplaceExp!CTFEExp(&ue, EXP.cantExpression);
+                return ue;
+            }
+            element = (*fp)(loc, x1.type, x1, x2).copy();
+        }
+        return elementsToVector(loc, type, new ArrayLiteralExp(loc, a1.type, elements));
+    }
+
     override void visit(VectorExp e)
     {
         debug (LOG)
@@ -5027,11 +5154,10 @@ public:
         assert(e1);
         if (exceptionOrCant(e1))
             return;
-        if (auto ve = e1.isVectorExp())
+        if (auto ale = vectorElements(pue, e1))
         {
-            result = interpretVectorToArray(pue, ve);
-            if (result.op != EXP.vector)
-                return;
+            result = ale;
+            return;
         }
         error(e.loc, "`%s` cannot be evaluated at compile time", e.toChars());
         result = CTFEExp.cantexp;
@@ -5784,8 +5910,18 @@ public:
             e1 = interpretRegion(e.e1, istate);
             if (exceptionOrCant(e1))
                 return;
-            assert(e1.op == EXP.vector);
-            e1 = interpretVectorToArray(pue, e1.isVectorExp());
+            auto ale = vectorElements(pue, e1);
+            if (!ale)
+            {
+                error(e.loc, "`%s` cannot be evaluated at compile time", e.toChars());
+                result = CTFEExp.cantexp;
+                return;
+            }
+            // The array is the vector's elements, whatever the qualifiers
+            // of either type; the elements stay shared, so writing through
+            // the cast writes the vector.
+            result = paintTypeOntoLiteral(pue, e.to, ale);
+            return;
         }
         if (e.to.ty == Tarray && e1.op == EXP.slice)
         {
