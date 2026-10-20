@@ -22,6 +22,7 @@
 // RUN: %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/nearmiss.d -of=%t/nearmiss.o
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/twomarkers.d 2>&1 | FileCheck %t/twomarkers.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/markedimage.d 2>&1 | FileCheck %t/markedimage.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/markedsampler.d 2>&1 | FileCheck %t/markedsampler.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/uint.d 2>&1 | FileCheck %t/uint.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/arrayinput.d 2>&1 | FileCheck %t/arrayinput.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/result.d 2>&1 | FileCheck %t/result.d
@@ -179,6 +180,14 @@ alias float2 = __vector(float[2]);
 alias float4 = __vector(float[4]);
 // CHECK: markedimage.d([[@LINE+1]]): Error: `@fragment` parameter `t` is a `Sampler2D`, which takes no `@input` or `@uniform` marker
 @fragment float4 first(@uniform Sampler2D t) { return t.sample(float2(0.5f)); }
+
+//--- markedsampler.d
+@compute(CompileFor.deviceOnly) module markedsampler;
+import ldc.dcompute;
+alias float2 = __vector(float[2]);
+alias float4 = __vector(float[4]);
+// CHECK: markedsampler.d([[@LINE+1]]): Error: `@fragment` parameter `s` is a `SamplerState`, which takes no `@input` or `@uniform` marker
+@fragment float4 first(Sampler2D t, @input SamplerState s) { return t.sample(s, float2(0.5f)); }
 
 //--- intinput.d
 @compute(CompileFor.deviceOnly) module intinput;

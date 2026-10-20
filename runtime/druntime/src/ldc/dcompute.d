@@ -409,6 +409,19 @@ static if (__traits(compiles, { __vector(float[2]) a; __vector(float[4]) b; __ve
         return __spirv_resource_sample_2d(s, __spirv_shared_sampler(), uv, noOffset);
     }
 
+    /++
+     + Samples the image at normalised `uv` through `sampler`, a
+     + `SamplerState` parameter of the entry point with a binding of its own:
+     + `atlas.sample(nearest, uv)`. An entry point that reads its images with
+     + different filtering or addressing takes one sampler per kind.
+     +/
+    __vector(float[4]) sample(S : Sampler2D)(S s, SamplerState sampler, __vector(float[2]) uv)
+        @safe pure nothrow @nogc
+    {
+        __vector(int[2]) noOffset = 0;
+        return __spirv_resource_sample_2d(s, sampler, uv, noOffset);
+    }
+
     // A texture read: pure in the only sense that matters to a shader (the
     // image is immutable for the draw), and never allocates or throws.
     pragma(LDC_intrinsic, "llvm.spv.resource.sample.v4f32.tspirv.Image_f32_1_2_0_0_1_0t.tspirv.Samplert.v2f32.v2i32")

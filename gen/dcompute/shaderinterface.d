@@ -74,6 +74,7 @@ enum ShaderVariableKind : int
     pushConstants, /// a `PushConstants!T` on Vulkan: std430
     defaultUniform, /// a `@uniform` on Vulkan: member `ordinal` of the entry's default block
     looseBlock,    /// a block on OpenGL: one uniform per field of its `T`
+    sampler,       /// a `SamplerState` parameter: binding `ordinal`
 }
 
 /// One variable of an entry point's interface.
@@ -1183,6 +1184,7 @@ enum ItemKind
     builtin,
     uniform,
     image,
+    sampler,
     uniformBlock,
     pushConstants,
 }
@@ -1227,6 +1229,7 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
     const builtinId = builtinOf(vd);
     const isBuiltin = builtinId >= 0;
     const isImage = ts && ts.sym.ident == Id.dcSampler2D && isFromLdcDCompute(ts.sym);
+    const isSampler = ts && ts.sym.ident == Id.dcSampler && isFromLdcDCompute(ts.sym);
     bool push;
     auto blockType = blockOf(dty, push);
     const isResources = ts && dcomputeAttribute(ts.sym, Id.udaShaderResources) !is null;
@@ -1245,10 +1248,12 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
         error(vd.loc, "%s parameter `%s` is marked both `@input` and `@uniform`; it must be one", attr, name);
         fatal();
     }
-    if ((isInput || isUniform) && (isImage || blockType || isResources))
+    if ((isInput || isUniform) && (isImage || isSampler || blockType || isResources))
     {
         error(vd.loc, isImage
             ? "%s parameter `%s` is a `Sampler2D`, which takes no `@input` or `@uniform` marker"
+            : isSampler
+            ? "%s parameter `%s` is a `SamplerState`, which takes no `@input` or `@uniform` marker"
             : "%s parameter `%s` is a resource, which takes no `@input` or `@uniform` marker",
             attr, name);
         fatal();
@@ -1316,17 +1321,18 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
             fatal();
         }
     }
-    else if (!isImage)
+    else if (!isImage && !isSampler)
     {
         error(vd.loc, path.length
-            ? "%s resource field `%s` must be a resource: `@uniform`, a `Sampler2D`, a block or a `@resources` struct"
-            : "%s parameter `%s` must be marked `@input`, `@uniform` or `@builtin`, or be a `Sampler2D`",
+            ? "%s resource field `%s` must be a resource: `@uniform`, a `Sampler2D`, a `SamplerState`, a block or a `@resources` struct"
+            : "%s parameter `%s` must be marked `@input`, `@uniform` or `@builtin`, or be a `Sampler2D` or a `SamplerState`",
             attr, name);
         fatal();
     }
     checkTranslatable(vd, stage == ShaderStage.vertex ? "`@vertex` parameter" : "`@fragment` parameter",
         isUniform ? dty : null);
-    it.kind = isInput ? ItemKind.input : isUniform ? ItemKind.uniform : ItemKind.image;
+    it.kind = isInput ? ItemKind.input : isUniform ? ItemKind.uniform
+        : isSampler ? ItemKind.sampler : ItemKind.image;
     items ~= it;
 }
 
@@ -1584,11 +1590,15 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
             }
             break;
         case ItemKind.image:
+        case ItemKind.sampler:
+            // A sampler of its own (`SamplerState`) takes a binding as an
+            // image does; the shared sampler keeps 0.
             claim(vd.ident.toString(), vd);
             const binding = it.fixedBinding >= 0 && blocks ? it.fixedBinding
                 : blocks ? nextFreeBinding() : nextBinding++;
-            recordInterfaceUse(stage, vd, entry, "image", binding);
-            v.kind = ShaderVariableKind.image;
+            const isSampler = it.kind == ItemKind.sampler;
+            recordInterfaceUse(stage, vd, entry, isSampler ? "sampler" : "image", binding);
+            v.kind = isSampler ? ShaderVariableKind.sampler : ShaderVariableKind.image;
             v.ordinal = binding;
             break;
         case ItemKind.uniformBlock:
