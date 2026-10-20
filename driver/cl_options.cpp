@@ -789,6 +789,11 @@ cl::opt<std::string>
                                "uniforms, as OpenGL binds them (the default), or "
                                "Vulkan's uniform and push-constant 'blocks'"),
                       cl::value_desc("loose|blocks"), cl::init("loose"));
+cl::opt<bool>
+    dcomputeReportInt64("mdcompute-report-int64",
+                        cl::desc("Name the source line of every 64-bit integer "
+                                 "operation the shader entry points reach"),
+                        cl::init(false));
 cl::opt<std::string>
     dcomputeManifest("mdcompute-manifest",
                      cl::desc("Write the unit's shader entry points, with "
@@ -1100,11 +1105,13 @@ const char *dcomputeActiveProfile() { return opts::dcomputeProfile.c_str(); }
 const char *dcomputeResourceLowering() {
   return opts::dcomputeResources.c_str();
 }
+bool dcomputeReportInt64() { return opts::dcomputeReportInt64; }
 const char *dcomputeManifestPath() { return opts::dcomputeManifest.c_str(); }
 bool dcomputeHasTargets() { return !opts::dcomputeTargets.empty(); }
 #else
 const char *dcomputeActiveProfile() { return ""; }
 const char *dcomputeResourceLowering() { return ""; }
+bool dcomputeReportInt64() { return false; }
 const char *dcomputeManifestPath() { return ""; }
 bool dcomputeHasTargets() { return false; }
 #endif
