@@ -1,4 +1,4 @@
-// On Vulkan (`-mdcompute-resources=blocks`) a `UniformBlock!T` is a uniform
+// On Vulkan (resources lowered to blocks: `uniformBlocks` granted) a `UniformBlock!T` is a uniform
 // block whose type is `T`, laid out by std140; a `PushConstants!T` a
 // push-constant block laid out by std430; and the `@uniform` parameters the
 // members of the entry point's default uniform block, `<entry>Uniforms` of
@@ -6,7 +6,7 @@
 // skipping a fixed `@binding`; a `@resources` struct stands for its fields.
 
 // REQUIRES: target_SPIRV && atleast_llvm23
-// RUN: %ldc -O2 -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -mdcompute-file-prefix=vk_res -output-o %s
+// RUN: %ldc -O2 -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -mdcompute-file-prefix=vk_res -output-o %s
 // RUN: spirv-dis vk_res_vulkan130_64.spv -o - | FileCheck %s
 // RUN: spirv-val --target-env vulkan1.3 vk_res_vulkan130_64.spv
 

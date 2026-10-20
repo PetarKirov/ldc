@@ -612,6 +612,7 @@ immutable Msgtable[] msgtable =
     { "dcSampler2D", "Sampler2D" },
     { "dcUniformBlock", "UniformBlock" },
     { "dcPushConstants", "PushConstants" },
+    { "dcCapability", "Capability" },
     { "dcSharedSampler", "__spirv_shared_sampler" },
     { "dcReflect", "__dcompute_reflect" },
     // dcompute array comparison/equality lowering hooks
