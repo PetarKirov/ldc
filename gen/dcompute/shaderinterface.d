@@ -127,6 +127,23 @@ uint shaderBlockArrayStride(Type element, int rule) => cast(uint) strideOf(eleme
 /// ditto: the alignment of a block member of `t`.
 uint shaderBlockAlignment(Type t, int rule) => cast(uint) alignmentOf(t, cast(Rule) rule);
 
+/// The type a value of D type `t` has at a shader's interface: its base
+/// type, or, for a struct marked `@vectorType`, its vector's.
+Type shaderType(Type t)
+{
+    t = t.toBasetype();
+    auto ts = t.isTypeStruct();
+    if (!ts || !dcomputeAttributeLiteral(ts.sym, Id.udaShaderVectorType))
+        return t;
+    if (ts.sym.fields.length != 1 || !ts.sym.fields[0].type.toBasetype().isTypeVector())
+    {
+        error(ts.sym.loc, "`@vectorType` struct `%s` must have exactly one field, a `__vector`",
+            ts.sym.toPrettyChars());
+        fatal();
+    }
+    return ts.sym.fields[0].type.toBasetype();
+}
+
 /// The description of `fd` if it is a shader entry point this compilation
 /// emits, else null. `analyseShaderEntries` builds them.
 const(ShaderEntry)* shaderEntryOf(FuncDeclaration fd)
@@ -580,7 +597,7 @@ const(char)* stageAttr(ShaderStage s) => s == ShaderStage.vertex ? "`@vertex`" :
 
 bool isFloat4(Type t)
 {
-    t = t.toBasetype();
+    t = shaderType(t);
     auto tv = t.isTypeVector();
     return tv && tv.elementType().ty == TY.Tfloat32
         && (cast(TypeSArray) tv.basetype).dim.toInteger() == 4;
@@ -612,7 +629,7 @@ immutable(BuiltinVariable)* checkBuiltin(VarDeclaration vd, int b, const(char)* 
             v.output ? "output".ptr : "input".ptr, output ? "output".ptr : "input".ptr);
         fatal();
     }
-    auto t = vd.type.toBasetype();
+    auto t = shaderType(vd.type);
     if (!hasBuiltinType(t, v.type))
     {
         error(vd.loc, "built-in `%s` of %s %s `%s` is `%s`, not `%s`", v.name.ptr,
@@ -648,7 +665,7 @@ enum Crossing
 /// Whether `t` is an `int`, a `uint` or a vector of them.
 bool isIntegerScalarOrVector(Type t)
 {
-    t = t.toBasetype();
+    t = shaderType(t);
     if (auto tv = t.isTypeVector())
         t = tv.elementType();
     return t.ty == TY.Tint32 || t.ty == TY.Tuns32;
@@ -657,7 +674,7 @@ bool isIntegerScalarOrVector(Type t)
 /// Why `t` cannot cross as `crossing`, or null if it can.
 const(char)* refusal(Type t, Crossing crossing)
 {
-    t = t.toBasetype();
+    t = shaderType(t);
     if (crossing == Crossing.output)
         return isFloat4(t) ? null
             : "the output is a vector of four `float`s, as GLSL ES 1.00's `gl_FragData[0]` is".ptr;
@@ -829,9 +846,9 @@ void checkTranslatable(Dsymbol s, const(char)* what, Type t = null)
     }
     if (!t)
         return;
-    t = t.toBasetype();
+    t = shaderType(t);
     while (t.ty == TY.Tsarray)
-        t = t.nextOf().toBasetype();
+        t = shaderType(t.nextOf());
     if (auto ts = t.isTypeStruct())
         foreach (field; ts.sym.fields)
             checkTranslatable(field, "uniform struct field", field.type);
@@ -867,9 +884,9 @@ void recordInterfaceUse(ShaderStage stage, VarDeclaration vd, const(char)* entry
     // stage's input and output.
     const key = (stage == ShaderStage.vertex ? "vertex " : "")
         ~ (strcmp(kind, "output") == 0 ? "out " : "in ") ~ vd.ident.toString().idup;
-    // `in float` and `float` are one interface type; two structs of one name
-    // from two modules are not.
-    const type = unSharedOf(mutableOf(vd.type.toBasetype())).toPrettyChars(true);
+    // `in float` and `float` are one interface type, and so are a `@vectorType`
+    // struct and its vector; two structs of one name from two modules are not.
+    const type = unSharedOf(mutableOf(shaderType(vd.type))).toPrettyChars(true);
     auto first = key in interfaceUses;
     if (!first)
     {
@@ -1222,7 +1239,7 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
     ShaderStage stage, ref Item[] items)
 {
     const name = vd.ident.toChars();
-    auto dty = vd.type.toBasetype();
+    auto dty = shaderType(vd.type);
     auto ts = dty.isTypeStruct();
     const isInput = hasMarker(vd, Id.udaShaderInput);
     const isUniform = hasMarker(vd, Id.udaShaderUniform);
@@ -1358,7 +1375,7 @@ size_t vectorLengthOf(Type t)
 
 size_t alignmentOf(Type t, Rule rule)
 {
-    t = t.toBasetype();
+    t = shaderType(t);
     if (auto n = vectorLengthOf(t))
         return n == 2 ? 8 : 16;
     if (auto sa = t.isTypeSArray())
@@ -1383,7 +1400,7 @@ size_t strideOf(Type element, Rule rule)
 
 size_t sizeOf(Type t, Rule rule)
 {
-    t = t.toBasetype();
+    t = shaderType(t);
     if (auto n = vectorLengthOf(t))
         return 4 * n;
     if (auto sa = t.isTypeSArray())
@@ -1442,7 +1459,7 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
     auto e = new ShaderEntry(fd, stage);
     ShaderVariable[] vars;
 
-    auto ret = fd.type.nextOf().toBasetype();
+    auto ret = shaderType(fd.type.nextOf());
     if (stage == ShaderStage.vertex)
     {
         auto ts = ret.isTypeStruct();

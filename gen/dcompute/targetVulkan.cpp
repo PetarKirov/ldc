@@ -133,6 +133,14 @@ public:
       f.removeFnAttr(llvm::Attribute::NoInline);
       f.addFnAttr(llvm::Attribute::AlwaysInline);
     }
+    // Likewise a template's data, such as a struct template's `__init`: D
+    // emits it weak so that copies merge at link time, which a shader never
+    // reaches. The interface's variables are external and stay as they are.
+    for (auto &gv : _ir->module.globals())
+      if (!gv.isDeclaration() && (gv.hasWeakLinkage() || gv.hasLinkOnceLinkage())) {
+        gv.setLinkage(llvm::GlobalValue::InternalLinkage);
+        gv.setComdat(nullptr);
+      }
   }
 
   llvm::AttrBuilder buildKernAttrs(StructLiteralExp *kernAttr) {
@@ -364,7 +372,7 @@ public:
 
   /// The SPIR-V-facing type of an interface variable of D type `t`.
   llvm::Type *interfaceType(Type *t) {
-    t = t->toBasetype();
+    t = shaderType(t);
     switch (t->ty) {
     case TY::Tsarray:
       return llvm::ArrayType::get(
@@ -403,6 +411,9 @@ public:
     llvm::Type *dty = DtoType(t);
     if (v->getType() == dty)
       return v;
+    if (shaderType(t) != t)
+      return builder.CreateInsertValue(llvm::UndefValue::get(dty), v,
+                                       vectorMember(t));
     switch (t->ty) {
     case TY::Tsarray: {
       llvm::Value *r = llvm::Constant::getNullValue(dty);
@@ -430,6 +441,20 @@ public:
     default:
       llvm_unreachable("an interface type that needs no conversion");
     }
+  }
+
+  /// The index of a `@vectorType` struct's vector in its LLVM type.
+  static unsigned vectorMember(Type *t) {
+    StructDeclaration *sd = static_cast<TypeStruct *>(t->toBasetype())->sym;
+    return memberIndex(getIrType(t->toBasetype())->isAggr(), sd, sd->fields[0]);
+  }
+
+  /// `v`, a value of D type `t`, as the interface stores it: a
+  /// `@vectorType` struct's vector, anything else as it is.
+  llvm::Value *toInterface(llvm::IRBuilder<> &builder, llvm::Value *v, Type *t) {
+    if (shaderType(t) == t->toBasetype())
+      return v;
+    return builder.CreateExtractValue(v, vectorMember(t));
   }
 
   /// `field`'s index in `sd`'s LLVM type; an overlapping field has none.
@@ -559,7 +584,7 @@ public:
 
   /// The LLVM type of a block member of D type `t`.
   llvm::Type *blockMemberType(Type *t, int rule, Loc loc) {
-    t = t->toBasetype();
+    t = shaderType(t);
     if (t->ty == TY::Tstruct)
       return blockStruct(static_cast<TypeStruct *>(t)->sym, rule, loc).type;
     if (t->ty == TY::Tsarray) {
@@ -582,6 +607,8 @@ public:
   llvm::Value *loadBlockValue(llvm::IRBuilder<> &builder, llvm::Value *ptr,
                               Type *t, int rule, Loc loc) {
     t = t->toBasetype();
+    if (Type *vt = shaderType(t); vt != t)
+      return fromInterface(builder, loadBlockValue(builder, ptr, vt, rule, loc), t);
     llvm::Type *dty = DtoType(t);
     if (t->ty == TY::Tstruct) {
       StructDeclaration *sd = static_cast<TypeStruct *>(t)->sym;
@@ -812,20 +839,25 @@ public:
       llvm::Value *value = nullptr;
       switch (v.kind) {
       case ShaderVariableKind::input: {
-        llvm::Type *it = DtoType(dty);
-        value = builder.CreateLoad(
-            it, locationVariable(it, false, stage, v.name, v.ordinal), v.name);
+        llvm::Type *it = DtoType(shaderType(dty));
+        value = fromInterface(
+            builder,
+            builder.CreateLoad(
+                it, locationVariable(it, false, stage, v.name, v.ordinal), v.name),
+            dty);
         break;
       }
       case ShaderVariableKind::builtinInput: {
         // A `bool` built-in (`FrontFacing`) is SPIR-V's `OpTypeBool`, which
         // LLVM spells `i1`; D passes a `bool` as a wider integer.
         const bool isBool = dty->ty == TY::Tbool;
-        llvm::Type *it = isBool ? llvm::Type::getInt1Ty(ctx) : DtoType(dty);
+        llvm::Type *it = isBool ? llvm::Type::getInt1Ty(ctx) : DtoType(shaderType(dty));
         value = builder.CreateLoad(
             it, builtinVariable(it, false, v.name, v.ordinal), v.name);
         if (isBool)
           value = builder.CreateZExt(value, pt);
+        else
+          value = fromInterface(builder, value, dty);
         break;
       }
       case ShaderVariableKind::uniform: {
@@ -892,18 +924,27 @@ public:
         const ShaderVariable &v = entry->variables[i];
         if (v.parameter >= 0)
           continue;
-        llvm::Value *field = builder.CreateExtractValue(
-            value, memberIndex(aggr, entry->result, v.decl), v.name);
+        llvm::Value *field = toInterface(
+            builder,
+            builder.CreateExtractValue(value, memberIndex(aggr, entry->result, v.decl),
+                                       v.name),
+            v.decl->type);
         builder.CreateStore(
             field, v.kind == ShaderVariableKind::builtinOutput
                        ? builtinVariable(field->getType(), true, v.name, v.ordinal)
                        : locationVariable(field->getType(), true, stage, v.name,
                                           v.ordinal));
       }
-    } else if (!tf->getReturnType()->isVoidTy()) {
-      builder.CreateStore(call, locationVariable(tf->getReturnType(), true,
-                                                 ShaderStage::fragment,
-                                                 "finalColor", 0));
+    } else if (ret->ty != TY::Tvoid) {
+      // A fragment's colour; a `@vectorType` result may come back through
+      // `sret`.
+      llvm::Value *value =
+          resultSlot ? static_cast<llvm::Value *>(builder.CreateLoad(DtoType(ret), resultSlot))
+                     : call;
+      value = toInterface(builder, value, ret);
+      builder.CreateStore(value, locationVariable(value->getType(), true,
+                                                  ShaderStage::fragment,
+                                                  "finalColor", 0));
     }
     builder.CreateRetVoid();
     IF_LOG Logger::cout() << *f << std::endl;

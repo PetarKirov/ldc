@@ -244,6 +244,17 @@ struct _resources {}
 /// ditto
 enum resources = _resources();
 
+/++
+ + Marks a struct whose only field is a `__vector` as that vector wherever
+ + it crosses a shader's interface: as an input, an output, a built-in, a
+ + uniform, or a member of a block, the struct is its vector, with the
+ + vector's type, location and layout. Inside a shader it stays the struct,
+ + so a vector type can carry operators and named components.
+ +/
+struct _vectorType {}
+/// ditto
+enum vectorType = _vectorType();
+
 /// Fixes the binding of a resource on Vulkan: `@binding(3)`. Binding 0 is the
 /// shared sampler's.
 struct _binding
