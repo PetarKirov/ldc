@@ -54,8 +54,12 @@ public:
                        {{0, 1, 3, 2, 4}}) {
 
     _ir = new IRState("dcomputeTargetVulkan", ctx);
-    // "spirv-vulkan-foo"? foo = library, pixel, etc
-    std::string targTriple = "spirv1.6-unknown-vulkan1.3-compute";
+    // The newest SPIR-V each Vulkan version consumes: Vulkan 1.0 takes 1.0,
+    // 1.1 takes 1.3, 1.2 takes 1.5, and 1.3 and later take 1.6.
+    const char *spirv = ver >= 130 ? "1.6" : ver >= 120 ? "1.5" : ver >= 110 ? "1.3" : "1.0";
+    std::string targTriple = std::string("spirv") + spirv + "-unknown-vulkan" +
+                             std::to_string(ver / 100) + "." +
+                             std::to_string(ver / 10 % 10) + "-compute";
     _ir->module.setTargetTriple(llvm::Triple(targTriple));
 
     // No arch name: an explicit one replaces the triple's, and with it the
