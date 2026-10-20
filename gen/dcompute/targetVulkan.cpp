@@ -831,6 +831,7 @@ public:
         break;
       }
       case ShaderVariableKind::image:
+      case ShaderVariableKind::sampler:
         value = buildResourceHandle(builder, pt, v.ordinal, v.name);
         break;
       case ShaderVariableKind::uniformBlock:
@@ -846,8 +847,10 @@ public:
       }
       if (!v.depth) {
         args[v.parameter + first] =
-            v.kind == ShaderVariableKind::image ? value
-                                                : asArgument(builder, value, pt);
+            v.kind == ShaderVariableKind::image ||
+                    v.kind == ShaderVariableKind::sampler
+                ? value
+                : asArgument(builder, value, pt);
         continue;
       }
       // Into the parameter's aggregate, along the field path.

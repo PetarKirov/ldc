@@ -34,7 +34,8 @@ enum class ShaderVariableKind : int {
   uniformBlock,  // a `UniformBlock!T` on Vulkan: binding `ordinal`, std140
   pushConstants, // a `PushConstants!T` on Vulkan: std430
   defaultUniform, // a `@uniform` on Vulkan: member `ordinal` of the default block
-  looseBlock     // a block on OpenGL: one uniform per field of its `T`
+  looseBlock,    // a block on OpenGL: one uniform per field of its `T`
+  sampler        // a `SamplerState` parameter: binding `ordinal`
 };
 
 struct ShaderVariable {

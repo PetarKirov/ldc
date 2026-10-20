@@ -57,7 +57,7 @@ struct U { float gain; }
 //--- notresource.d
 @compute(CompileFor.deviceOnly) module notresource;
 import ldc.dcompute;
-// CHECK: notresource.d(4): Error: `@fragment` resource field `x` must be a resource: `@uniform`, a `Sampler2D`, a block or a `@resources` struct
+// CHECK: notresource.d(4): Error: `@fragment` resource field `x` must be a resource: `@uniform`, a `Sampler2D`, a `SamplerState`, a block or a `@resources` struct
 @resources struct R { float x; }
 @_profiles("vulkan1.3") @fragment __vector(float[4]) f(R r) { return __vector(float[4])(r.x); }
 
