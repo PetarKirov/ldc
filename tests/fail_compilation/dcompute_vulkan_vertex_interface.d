@@ -1,5 +1,5 @@
-// A vertex entry point's built-ins are read and written in their stage, in
-// their direction and with their type; it returns a struct with a position.
+// A stage's built-ins are read and written in their stage, in their direction
+// and with their type; a vertex entry point returns a struct with a position.
 
 // REQUIRES: target_SPIRV && atleast_llvm23
 // RUN: split-file %s %t
@@ -12,6 +12,8 @@
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/badoutput.d 2>&1 | FileCheck %t/badoutput.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/markedbuiltin.d 2>&1 | FileCheck %t/markedbuiltin.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/badfield.d 2>&1 | FileCheck %t/badfield.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/fronttype.d 2>&1 | FileCheck %t/fronttype.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -I%t %t/coordstage.d 2>&1 | FileCheck %t/coordstage.d
 
 //--- wrongstage.d
 @compute(CompileFor.deviceOnly) module wrongstage;
@@ -73,3 +75,16 @@ import ldc.dcompute;
 // CHECK: badfield.d(4): Error: built-in `vertexIndex` of `@vertex` result field `i` is an input, not an output
 struct V { @builtin(Builtin.position) __vector(float[4]) position; @builtin(Builtin.vertexIndex) int i; }
 @_profiles("vulkan1.3") @vertex V f() { V r; return r; }
+
+//--- fronttype.d
+@compute(CompileFor.deviceOnly) module fronttype;
+import ldc.dcompute;
+// CHECK: fronttype.d(4): Error: built-in `frontFacing` of `@fragment` parameter `front` is `bool`, not `int`
+@fragment __vector(float[4]) f(@builtin(Builtin.frontFacing) int front) { return __vector(float[4])(cast(float) front); }
+
+//--- coordstage.d
+@compute(CompileFor.deviceOnly) module coordstage;
+import ldc.dcompute;
+struct V { @builtin(Builtin.position) __vector(float[4]) position; }
+// CHECK: coordstage.d(5): Error: built-in `fragCoord` of `@vertex` parameter `p` is a fragment-stage built-in
+@_profiles("vulkan1.3") @vertex V g(@builtin(Builtin.fragCoord) __vector(float[4]) p) { V r; r.position = p; return r; }

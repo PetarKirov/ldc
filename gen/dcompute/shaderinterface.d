@@ -142,13 +142,18 @@ void analyseShaderEntries(ref Modules modules)
 {
     if (!dcomputeHasTargets())
         return;
+    const(ShaderEntry)*[] emitted;
     foreach (m; modules[])
         foreachEntry(m.members, (FuncDeclaration fd, ShaderStage stage) {
             if (!isEmittedForActiveProfile(fd, stage))
                 return;
             if (auto e = describe(fd, stage))
+            {
                 entries[fd] = e;
+                emitted ~= e;
+            }
         });
+    checkRequirements(emitted);
     if (dcomputeReportInt64())
         reportInt64(entries.keys);
 }
@@ -248,6 +253,30 @@ bool isFromLdcDCompute(Dsymbol s)
 /// with fields of `fieldTypes`, or null.
 StructLiteralExp dcomputeAttribute(Dsymbol sym, Identifier id, Type[] fieldTypes...)
 {
+    auto sle = dcomputeAttributeLiteral(sym, id);
+    if (sle)
+    {
+        if (sle.elements.length != fieldTypes.length)
+        {
+            error(sle.loc, "unexpected field count in `%s`; does druntime not match compiler version?",
+                sle.sd.toPrettyChars());
+            fatal();
+        }
+        foreach (i, t; fieldTypes)
+            if ((*sle.elements)[i].type.toBasetype() != t)
+            {
+                error(sle.loc, "invalid field type in `%s`; does druntime not match compiler version?",
+                    sle.sd.toPrettyChars());
+                fatal();
+            }
+    }
+    return sle;
+}
+
+/// The attribute of `sym` that is a literal of `ldc.dcompute`'s struct `id`,
+/// whatever its fields, or null.
+StructLiteralExp dcomputeAttributeLiteral(Dsymbol sym, Identifier id)
+{
     import dmd.attribsem : getAttributes;
     import dmd.dinterpret : ctfeInterpret;
     import dmd.expressionsem : expandTuples;
@@ -265,22 +294,8 @@ StructLiteralExp dcomputeAttribute(Dsymbol sym, Identifier id, Type[] fieldTypes
         if (global.endGagging(gagged))
             continue;
         auto sle = e.isStructLiteralExp();
-        if (!sle || sle.sd.ident != id || !isFromLdcDCompute(sle.sd))
-            continue;
-        if (sle.elements.length != fieldTypes.length)
-        {
-            error(sle.loc, "unexpected field count in `%s`; does druntime not match compiler version?",
-                sle.sd.toPrettyChars());
-            fatal();
-        }
-        foreach (i, t; fieldTypes)
-            if ((*sle.elements)[i].type.toBasetype() != t)
-            {
-                error(sle.loc, "invalid field type in `%s`; does druntime not match compiler version?",
-                    sle.sd.toPrettyChars());
-                fatal();
-            }
-        return sle;
+        if (sle && sle.sd.ident == id && isFromLdcDCompute(sle.sd))
+            return sle;
     }
     return null;
 }
@@ -526,14 +541,39 @@ struct BuiltinVariable
     ShaderStage stage;
     bool output;
     int spirv;
-    bool isFloat4; // else `int`
+    BuiltinType type;
+}
+
+/// The D type of a built-in variable.
+enum BuiltinType
+{
+    int_,
+    float4,
+    bool_,
 }
 
 immutable BuiltinVariable[] builtins = [
-    BuiltinVariable("vertexIndex", ShaderStage.vertex, false, 42, false),
-    BuiltinVariable("instanceIndex", ShaderStage.vertex, false, 43, false),
-    BuiltinVariable("position", ShaderStage.vertex, true, 0, true),
+    BuiltinVariable("vertexIndex", ShaderStage.vertex, false, 42, BuiltinType.int_),
+    BuiltinVariable("instanceIndex", ShaderStage.vertex, false, 43, BuiltinType.int_),
+    BuiltinVariable("position", ShaderStage.vertex, true, 0, BuiltinType.float4),
+    BuiltinVariable("fragCoord", ShaderStage.fragment, false, 15, BuiltinType.float4),
+    BuiltinVariable("frontFacing", ShaderStage.fragment, false, 17, BuiltinType.bool_),
 ];
+
+immutable string[] builtinTypeNames = ["int", "__vector(float[4])", "bool"];
+
+bool hasBuiltinType(Type t, BuiltinType type)
+{
+    final switch (type)
+    {
+    case BuiltinType.int_:
+        return t.ty == TY.Tint32;
+    case BuiltinType.float4:
+        return isFloat4(t);
+    case BuiltinType.bool_:
+        return t.ty == TY.Tbool;
+    }
+}
 
 const(char)* stageAttr(ShaderStage s) => s == ShaderStage.vertex ? "`@vertex`" : "`@fragment`";
 
@@ -572,11 +612,11 @@ immutable(BuiltinVariable)* checkBuiltin(VarDeclaration vd, int b, const(char)* 
         fatal();
     }
     auto t = vd.type.toBasetype();
-    if (v.isFloat4 ? !isFloat4(t) : t.ty != TY.Tint32)
+    if (!hasBuiltinType(t, v.type))
     {
         error(vd.loc, "built-in `%s` of %s %s `%s` is `%s`, not `%s`", v.name.ptr,
             stageAttr(stage), what, vd.ident.toChars(),
-            v.isFloat4 ? "__vector(float[4])".ptr : "int".ptr, vd.type.toChars());
+            builtinTypeNames[v.type].ptr, vd.type.toChars());
         fatal();
     }
     return v;
@@ -950,6 +990,189 @@ void reportInt64(FuncDeclaration[] roots)
         r.enqueue(fd);
     for (size_t i = 0; i < r.queue.length; i++)
         r.queue[i].fbody.accept(r);
+}
+
+// ---- requirements -----------------------------------------------------------
+
+/// A function an entry point reaches: the one whose body calls it, as an
+/// index into the walk (-1 for the entry point itself), and where.
+struct Reached
+{
+    FuncDeclaration fd;
+    ptrdiff_t from;
+    Loc at;
+}
+
+/**
+With a `shader` grant, checks every entry point the compilation emits
+against what the functions it reaches require (`SHC8`): each function marked
+`@requires(c, …)`, and each call of `ldc.dcompute.unsupported!c`, that the
+entry point reaches through the calls in the bodies it reaches. The entry
+point is granted the compilation's capabilities, and of the stages, only its
+own. A capability it is not granted fails the compilation at the entry
+point, followed by the chain of calls that reaches it, each at its line. A
+function only unemitted entry points reach is never walked.
+*/
+void checkRequirements(const(ShaderEntry)*[] emitted)
+{
+    if (!shaderGrants().given)
+        return;
+    const vocabulary = capabilityVocabulary();
+    foreach (e; emitted)
+    {
+        auto walk = reachableFrom(cast() e.fd);
+        bool[string] reported;
+        foreach (i, ref r; walk)
+        {
+            const(char)[][] needs;
+            bool viaUnsupported;
+            if (auto c = unsupportedCapability(r.fd, vocabulary))
+            {
+                needs = [c];
+                viaUnsupported = true;
+            }
+            else
+                needs = requirementsOf(r.fd, vocabulary);
+            foreach (c; needs)
+            {
+                if (entryIsGranted(c, e.stage) || c in reported)
+                    continue;
+                reported[c.idup] = true;
+                reportRequirement(e, walk, i, c, viaUnsupported);
+            }
+        }
+    }
+}
+
+/// The functions `entry` reaches, breadth first, so that each one's chain
+/// from the entry point is a shortest one.
+Reached[] reachableFrom(FuncDeclaration entry)
+{
+    import dmd.visitor : SemanticTimeTransitiveVisitor;
+
+    extern (C++) final class Walk : SemanticTimeTransitiveVisitor
+    {
+        alias visit = SemanticTimeTransitiveVisitor.visit;
+        Reached[] nodes;
+        bool[void*] seen;
+        ptrdiff_t current = -1;
+
+        void add(FuncDeclaration fd, Loc at)
+        {
+            if (fd && cast(void*) fd !in seen)
+            {
+                seen[cast(void*) fd] = true;
+                nodes ~= Reached(fd, current, at);
+            }
+        }
+
+        override void visit(CallExp e)
+        {
+            add(e.f, e.loc);
+            super.visit(e);
+        }
+    }
+
+    auto w = new Walk();
+    w.add(entry, entry.loc);
+    for (size_t i = 0; i < w.nodes.length; i++)
+    {
+        w.current = i;
+        if (auto body_ = w.nodes[i].fd.fbody)
+            body_.accept(w);
+    }
+    return w.nodes;
+}
+
+/// Whether an entry point of `stage` is granted `capability`: the
+/// compilation grants it, and it is not another stage's.
+bool entryIsGranted(const(char)[] capability, ShaderStage stage)
+{
+    if (capability == "vertexStage" && stage != ShaderStage.vertex)
+        return false;
+    if (capability == "fragmentStage" && stage != ShaderStage.fragment)
+        return false;
+    return (capability in shaderGrants().names) !is null;
+}
+
+/// The capabilities a `@requires` on `fd` names.
+const(char)[][] requirementsOf(FuncDeclaration fd, const(const(char)[])[] vocabulary)
+{
+    auto sle = dcomputeAttributeLiteral(fd, Id.udaShaderRequires);
+    if (!sle || !sle.elements || sle.elements.length != 1)
+        return null;
+    const(char)[][] names;
+    if (auto list = (*sle.elements)[0].isArrayLiteralExp())
+        if (list.elements)
+            foreach (e; (*list.elements)[])
+                names ~= capabilityName(e, vocabulary);
+    return names;
+}
+
+/// The capability `fd` stands in for, if it is an instance of
+/// `ldc.dcompute.unsupported`.
+const(char)[] unsupportedCapability(FuncDeclaration fd, const(const(char)[])[] vocabulary)
+{
+    auto ti = fd.isInstantiated();
+    if (!ti || !ti.tempdecl || ti.tempdecl.ident != Id.dcUnsupported
+        || !isFromLdcDCompute(ti.tempdecl) || !ti.tiargs || !ti.tiargs.length)
+        return null;
+    import dmd.dtemplate : isExpression;
+
+    if (auto e = isExpression((*ti.tiargs)[0]))
+        return capabilityName(e, vocabulary);
+    return null;
+}
+
+/// The name of the `ldc.dcompute.Capability` `e` evaluates to.
+const(char)[] capabilityName(Expression e, const(const(char)[])[] vocabulary)
+{
+    import dmd.dinterpret : ctfeInterpret;
+
+    // A template argument may still name the enum member.
+    const i = ctfeInterpret(e).toInteger();
+    return i < vocabulary.length ? vocabulary[cast(size_t) i] : "(unknown)";
+}
+
+/// `fd`'s qualified name; an eponymous template's instance by the template's.
+const(char)* prettyName(FuncDeclaration fd)
+{
+    if (auto ti = fd.isInstantiated())
+        if (ti.tempdecl && ti.tempdecl.ident == fd.ident)
+            return ti.toPrettyChars();
+    return fd.toPrettyChars();
+}
+
+void reportRequirement(const(ShaderEntry)* e, Reached[] walk, size_t target,
+    const(char)[] capability, bool viaUnsupported)
+{
+    auto fd = walk[target].fd;
+    const profile = dcomputeActiveProfile().toDString();
+    const otherStage = (capability == "vertexStage" || capability == "fragmentStage")
+        && capability in shaderGrants().names;
+    OutBuffer why;
+    if (otherStage)
+        why.printf("%s entry points are not granted `%.*s`", stageAttr(e.stage),
+            cast(int) capability.length, capability.ptr);
+    else if (profile.length)
+        why.printf("the profile `%.*s` does not grant it", cast(int) profile.length, profile.ptr);
+    else
+        why.writestring("the compilation is not granted it");
+    if (target == 0)
+        error(e.fd.loc, "entry point `%s` requires `%.*s`; %s", e.fd.ident.toChars(),
+            cast(int) capability.length, capability.ptr, why.peekChars());
+    else
+        error(e.fd.loc, "entry point `%s` reaches `%s`, which %s `%.*s`; %s",
+            e.fd.ident.toChars(), prettyName(fd),
+            viaUnsupported ? "stands in for".ptr : "requires".ptr,
+            cast(int) capability.length, capability.ptr, why.peekChars());
+    // The chain, from the entry point down to the function.
+    size_t[] chain;
+    for (ptrdiff_t i = target; i > 0; i = walk[i].from)
+        chain ~= i;
+    foreach_reverse (i; chain)
+        errorSupplemental(walk[i].at, "`%s` calls `%s`", prettyName(walk[walk[i].from].fd),
+            prettyName(walk[i].fd));
 }
 
 // ---- resources ---------------------------------------------------------------
