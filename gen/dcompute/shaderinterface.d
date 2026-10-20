@@ -38,7 +38,7 @@ import dmd.identifier;
 import dmd.location;
 import dmd.mtype;
 import dmd.expressionsem : toInteger;
-import dmd.typesem : toBasetype, nextOf;
+import dmd.typesem : isFloating, toBasetype, nextOf;
 import dmd.root.file : File;
 import dmd.root.filename : FileName;
 
@@ -782,10 +782,11 @@ void reportInt64(FuncDeclaration[] roots)
             }
         }
 
-        void report(Expression e)
+        // `type` is the 64-bit integer type the operation computes in.
+        void report(Expression e, Type type = null)
         {
             message(e.loc, "64-bit integer operation `%s` (`%s`); the profile denies `int64`",
-                e.toChars(), e.type.toChars());
+                e.toChars(), (type ? type : e.type).toChars());
         }
 
         override void visit(BinExp e)
@@ -808,6 +809,19 @@ void reportInt64(FuncDeclaration[] roots)
         {
             if (is64(e.type))
                 report(e);
+            super.visit(e);
+        }
+
+        // A conversion between a floating-point value and a 64-bit integer
+        // is computed in 64 bits; an integer widened to 64 bits only to be
+        // an index is not, and is left to the arithmetic that uses it.
+        override void visit(CastExp e)
+        {
+            auto from = e.e1.type ? e.e1.type.toBasetype() : null;
+            auto to = e.type ? e.type.toBasetype() : null;
+            if (from && to && !e.e1.isIntegerExp() && !e.e1.isRealExp()
+                && ((is64(e.type) && from.isFloating()) || (is64(e.e1.type) && to.isFloating())))
+                report(e, is64(e.type) ? e.type : e.e1.type);
             super.visit(e);
         }
 
