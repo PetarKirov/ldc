@@ -46,6 +46,8 @@ struct Id
     static Identifier *intrinsics;
     static Identifier *dcSampler;
     static Identifier *dcSampler2D;
+    static Identifier *dcUniformBlock;
+    static Identifier *dcPushConstants;
     static Identifier *dcSharedSampler;
     static Identifier *object;
     static Identifier *core;
@@ -107,6 +109,8 @@ struct Id
     static Identifier *udaShaderUniform;
     static Identifier *udaShaderBuiltin;
     static Identifier *udaShaderProfiles;
+    static Identifier *udaShaderResources;
+    static Identifier *udaShaderBinding;
     static Identifier *udaCompute;
     static Identifier *udaDynamicCompile;
     static Identifier *udaDynamicCompileConst;

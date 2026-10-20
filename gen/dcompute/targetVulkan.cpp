@@ -38,6 +38,7 @@
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/Analysis/CallGraph.h"
 #include <cstring>
+#include <map>
 #include <string>
 
 using namespace dmd;
@@ -77,6 +78,8 @@ public:
     // in its argument buffer: buffer device addresses (PhysicalStorageBuffer).
     _ir->module.addModuleFlag(llvm::Module::Error,
                               "spirv.physical-storage-buffer", 1);
+    // A uniform block is its struct, with no struct wrapping it (`D25`).
+    _ir->module.addModuleFlag(llvm::Module::Error, "spirv.struct-blocks", 1);
   }
 
   // A shader has no call stack: SPIR-V for Vulkan forbids recursion, and a
@@ -465,6 +468,261 @@ public:
     return buildResourceHandle(builder, samplerTy, /*binding=*/0, "sampler");
   }
 
+  // ---- blocks ---------------------------------------------------------------
+  //
+  // A block's LLVM type is a packed struct whose members sit at the offsets
+  // std140 (uniform blocks) or std430 (push constants) give them, as
+  // gen/dcompute/shaderinterface.d computes them: a spirv.Padding member
+  // fills each gap, and an array whose stride exceeds its element is peeled,
+  // {[N-1 x <{T, spirv.Padding}>], T}. The SPIR-V backend keeps neither
+  // padding as a member; it decorates the offsets and strides. A block is
+  // read leaf by leaf through access chains, never as a padded aggregate.
+
+  struct BlockStruct {
+    llvm::StructType *type = nullptr;
+    llvm::SmallVector<unsigned, 8> members; // a D field's LLVM member index
+  };
+  std::map<std::pair<StructDeclaration *, int>, BlockStruct> blockStructs;
+
+  llvm::Type *paddingType(unsigned bytes) {
+    return llvm::TargetExtType::get(ctx, "spirv.Padding", {}, {bytes});
+  }
+
+  /// A packed struct of `types` at `offsets`, `size` bytes long, named
+  /// `name` with members named `memberNames`.
+  BlockStruct buildBlockStruct(llvm::ArrayRef<Type *> types,
+                               llvm::ArrayRef<unsigned> offsets, unsigned size,
+                               llvm::StringRef name,
+                               llvm::ArrayRef<const char *> memberNames,
+                               int rule, Loc loc) {
+    const auto &dl = _ir->module.getDataLayout();
+    BlockStruct b;
+    llvm::SmallVector<llvm::Type *, 16> members;
+    uint64_t at = 0;
+    for (size_t k = 0; k < types.size(); k++) {
+      if (offsets[k] < at) {
+        error(loc, "cannot lay out block `%s`: member `%s` would overlap its "
+                   "predecessor",
+              name.str().c_str(), memberNames[k]);
+        fatal();
+      }
+      if (offsets[k] > at)
+        members.push_back(paddingType(offsets[k] - at));
+      b.members.push_back(members.size());
+      llvm::Type *t = blockMemberType(types[k], rule, loc);
+      members.push_back(t);
+      at = offsets[k] + dl.getTypeAllocSize(t);
+    }
+    if (size > at)
+      members.push_back(paddingType(size - at));
+    b.type = llvm::StructType::create(ctx, members, name, /*isPacked=*/true);
+    llvm::SmallVector<llvm::Metadata *, 16> names;
+    names.push_back(llvm::ConstantAsMetadata::get(llvm::PoisonValue::get(b.type)));
+    for (const char *n : memberNames)
+      names.push_back(llvm::MDString::get(ctx, n));
+    _ir->module.getOrInsertNamedMetadata("spirv.MemberNames")
+        ->addOperand(llvm::MDNode::get(ctx, names));
+    return b;
+  }
+
+  const BlockStruct &blockStruct(StructDeclaration *sd, int rule, Loc loc) {
+    auto key = std::make_pair(sd, rule);
+    auto it = blockStructs.find(key);
+    if (it != blockStructs.end())
+      return it->second;
+    llvm::SmallVector<Type *, 8> types;
+    llvm::SmallVector<unsigned, 8> offsets;
+    llvm::SmallVector<const char *, 8> names;
+    for (size_t k = 0; k < sd->fields.length; k++) {
+      types.push_back(sd->fields[k]->type->toBasetype());
+      offsets.push_back(shaderBlockFieldOffset(sd, k, rule));
+      names.push_back(sd->fields[k]->ident->toChars());
+    }
+    return blockStructs[key] =
+               buildBlockStruct(types, offsets, shaderBlockSize(sd->type, rule),
+                                sd->ident->toChars(), names, rule, loc);
+  }
+
+  /// The LLVM type of a block member of D type `t`.
+  llvm::Type *blockMemberType(Type *t, int rule, Loc loc) {
+    t = t->toBasetype();
+    if (t->ty == TY::Tstruct)
+      return blockStruct(static_cast<TypeStruct *>(t)->sym, rule, loc).type;
+    if (t->ty == TY::Tsarray) {
+      Type *et = t->nextOf()->toBasetype();
+      const auto n = toInteger(static_cast<TypeSArray *>(t)->dim);
+      llvm::Type *e = blockMemberType(et, rule, loc);
+      const unsigned stride = shaderBlockArrayStride(et, rule);
+      const uint64_t size = _ir->module.getDataLayout().getTypeAllocSize(e);
+      if (stride == size)
+        return llvm::ArrayType::get(e, n);
+      auto *padded = llvm::StructType::get(ctx, {e, paddingType(stride - size)},
+                                           /*isPacked=*/true);
+      return llvm::StructType::get(
+          ctx, {llvm::ArrayType::get(padded, n - 1), e}, /*isPacked=*/true);
+    }
+    return DtoType(t);
+  }
+
+  /// The D value of type `t` a block holds at `ptr`.
+  llvm::Value *loadBlockValue(llvm::IRBuilder<> &builder, llvm::Value *ptr,
+                              Type *t, int rule, Loc loc) {
+    t = t->toBasetype();
+    llvm::Type *dty = DtoType(t);
+    if (t->ty == TY::Tstruct) {
+      StructDeclaration *sd = static_cast<TypeStruct *>(t)->sym;
+      const BlockStruct &b = blockStruct(sd, rule, loc);
+      auto *aggr = getIrType(t)->isAggr();
+      llvm::Value *r = llvm::UndefValue::get(dty);
+      for (size_t k = 0; k < sd->fields.length; k++) {
+        llvm::Value *p = builder.CreateInBoundsGEP(
+            b.type, ptr, {builder.getInt32(0), builder.getInt32(b.members[k])});
+        r = builder.CreateInsertValue(
+            r, loadBlockValue(builder, p, sd->fields[k]->type, rule, loc),
+            memberIndex(aggr, sd, sd->fields[k]));
+      }
+      return r;
+    }
+    if (t->ty == TY::Tsarray) {
+      Type *et = t->nextOf()->toBasetype();
+      const auto n = toInteger(static_cast<TypeSArray *>(t)->dim);
+      llvm::Type *arrayTy = blockMemberType(t, rule, loc);
+      llvm::Value *r = llvm::UndefValue::get(dty);
+      for (unsigned k = 0; k < n; k++) {
+        // A peeled array is indexed by its padded element, which the
+        // backend reads as the array's element.
+        llvm::Value *p =
+            arrayTy->isArrayTy()
+                ? builder.CreateInBoundsGEP(arrayTy, ptr,
+                                            {builder.getInt32(0), builder.getInt32(k)})
+                : builder.CreateInBoundsGEP(
+                      llvm::cast<llvm::ArrayType>(arrayTy->getStructElementType(0))
+                          ->getElementType(),
+                      ptr, {builder.getInt32(k)});
+        r = builder.CreateInsertValue(r, loadBlockValue(builder, p, et, rule, loc), k);
+      }
+      return r;
+    }
+    return builder.CreateLoad(dty, ptr);
+  }
+
+  /// The `T` value of a block variable: a uniform block's, a push-constant
+  /// block's, or, on OpenGL, a block's fields as plain uniforms.
+  llvm::Value *loadBlock(llvm::IRBuilder<> &builder, const ShaderVariable &v) {
+    Type *t = v.blockType->toBasetype();
+    StructDeclaration *sd = static_cast<TypeStruct *>(t)->sym;
+    auto *aggr = getIrType(t)->isAggr();
+    llvm::Value *r = llvm::UndefValue::get(DtoType(t));
+    Loc loc = v.decl->loc;
+    if (v.kind == ShaderVariableKind::looseBlock) {
+      for (VarDeclaration *field : sd->fields) {
+        Type *ft = field->type->toBasetype();
+        llvm::Type *it = interfaceType(ft);
+        const char *name = field->ident->toChars();
+        llvm::Value *u = builder.CreateLoad(it, buildUniform(it, name), name);
+        r = builder.CreateInsertValue(r, fromInterface(builder, u, ft),
+                                      memberIndex(aggr, sd, field));
+      }
+      return r;
+    }
+    const bool push = v.kind == ShaderVariableKind::pushConstants;
+    const int rule = push ? 1 : 0;
+    const BlockStruct &b = blockStruct(sd, rule, loc);
+    llvm::Value *handle = nullptr;
+    llvm::Type *handleTy = nullptr;
+    if (push) {
+      handle = pushConstantVariable(b.type, v.name);
+    } else {
+      handleTy = llvm::TargetExtType::get(ctx, "spirv.VulkanBuffer", {b.type},
+                                          {/*Uniform*/ 2, /*isWritable*/ 0});
+      handle = buildResourceHandle(builder, handleTy, v.ordinal, v.name);
+    }
+    for (size_t k = 0; k < sd->fields.length; k++) {
+      llvm::Value *p = memberPointer(builder, handle, handleTy, b, k, push);
+      r = builder.CreateInsertValue(
+          r, loadBlockValue(builder, p, sd->fields[k]->type, rule, loc),
+          memberIndex(aggr, sd, sd->fields[k]));
+    }
+    return r;
+  }
+
+  /// A pointer to member `k` of a block: through
+  /// `llvm.spv.resource.getpointer` for a uniform block, by a GEP for a
+  /// push-constant block.
+  llvm::Value *memberPointer(llvm::IRBuilder<> &builder, llvm::Value *handle,
+                             llvm::Type *handleTy, const BlockStruct &b,
+                             size_t k, bool push) {
+    if (push)
+      return builder.CreateInBoundsGEP(
+          b.type, handle, {builder.getInt32(0), builder.getInt32(b.members[k])});
+    auto *p12 = llvm::PointerType::get(ctx, 12);
+    return buildIntrinsicCall(builder, "member", "llvm.spv.resource.getpointer",
+                              {p12, handleTy, getI32Type()},
+                              {handle, builder.getInt32(b.members[k])});
+  }
+
+  /// A push-constant block: a global in the `PushConstant` storage class.
+  llvm::GlobalVariable *pushConstantVariable(llvm::Type *ty, llvm::StringRef name) {
+    if (auto *existing = _ir->module.getGlobalVariable(name, true))
+      return existing;
+    auto *gv = new llvm::GlobalVariable(
+        _ir->module, ty, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
+        nullptr, name, nullptr, llvm::GlobalValue::NotThreadLocal,
+        /*PushConstant*/ 13, /*isExternallyInitialized=*/true);
+    gv->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    return gv;
+  }
+
+  /// `UniformBlock!T` or `PushConstants!T`, wrapping `value`, a `T`.
+  llvm::Value *wrapBlock(llvm::IRBuilder<> &builder, Type *wrapperTy,
+                         llvm::Value *value) {
+    StructDeclaration *sd = static_cast<TypeStruct *>(wrapperTy)->sym;
+    return builder.CreateInsertValue(
+        llvm::UndefValue::get(DtoType(wrapperTy)), value,
+        memberIndex(getIrType(wrapperTy)->isAggr(), sd, sd->fields[0]));
+  }
+
+  /// An entry point's default uniform block on Vulkan: its `@uniform`
+  /// parameters as the members of one std140 block (`SHR3`), built once.
+  struct DefaultBlock {
+    BlockStruct block;
+    llvm::Type *handleTy = nullptr;
+    llvm::Value *handle = nullptr;
+
+    llvm::Value *member(TargetVulkan &t, llvm::IRBuilder<> &builder,
+                        const ShaderEntry &entry, int index) {
+      llvm::SmallVector<const ShaderVariable *, 8> members;
+      for (size_t i = 0; i < entry.length; i++)
+        if (entry.variables[i].kind == ShaderVariableKind::defaultUniform)
+          members.push_back(&entry.variables[i]);
+      if (!handle) {
+        llvm::SmallVector<Type *, 8> types;
+        llvm::SmallVector<unsigned, 8> offsets;
+        llvm::SmallVector<const char *, 8> names;
+        unsigned at = 0;
+        for (const ShaderVariable *v : members) {
+          Type *ty = v->decl->type->toBasetype();
+          const unsigned a = shaderBlockAlignment(ty, 0);
+          at = (at + a - 1) / a * a;
+          types.push_back(ty);
+          offsets.push_back(at);
+          names.push_back(v->name);
+          at += shaderBlockSize(ty, 0);
+        }
+        block = t.buildBlockStruct(types, offsets, (at + 15) / 16 * 16,
+                                   entry.defaultBlockTypeName, names, 0,
+                                   entry.fd->loc);
+        handleTy = llvm::TargetExtType::get(t.ctx, "spirv.VulkanBuffer",
+                                            {block.type}, {2, 0});
+        handle = t.buildResourceHandle(builder, handleTy, entry.defaultBlockBinding,
+                                       entry.defaultBlockName);
+      }
+      const ShaderVariable *v = members[index];
+      llvm::Value *p = t.memberPointer(builder, handle, handleTy, block, index, false);
+      return t.loadBlockValue(builder, p, v->decl->type, 0, v->decl->loc);
+    }
+  };
+
   void addShaderEntry(FuncDeclaration *fd, llvm::Function *llf,
                       StructLiteralExp *) override {
     // The D function itself becomes an internal helper that the
@@ -514,40 +772,76 @@ public:
       resultSlot = builder.CreateAlloca(DtoType(ret), nullptr, "result");
       args[0] = resultSlot;
     }
+    // A field of a `@resources` parameter is inserted into the parameter's
+    // aggregate, which the optimiser then takes apart again (`SHF6`).
+    llvm::DenseMap<int, llvm::Value *> aggregates;
+    DefaultBlock defaults;
     for (size_t i = 0; i < entry->length; i++) {
       const ShaderVariable &v = entry->variables[i];
       if (v.parameter < 0)
         continue;
       VarDeclaration *vd = v.decl;
       Type *dty = vd->type->toBasetype();
-      llvm::Type *pt = tf->getParamType(v.parameter + first);
-      llvm::Value *&arg = args[v.parameter + first];
+      llvm::Type *pt = v.depth ? DtoType(dty) : tf->getParamType(v.parameter + first);
+      llvm::Value *value = nullptr;
       switch (v.kind) {
       case ShaderVariableKind::input: {
         llvm::Type *it = DtoType(dty);
-        arg = builder.CreateLoad(
+        value = builder.CreateLoad(
             it, locationVariable(it, false, stage, v.name, v.ordinal), v.name);
         break;
       }
       case ShaderVariableKind::builtinInput: {
         llvm::Type *it = DtoType(dty);
-        arg = builder.CreateLoad(it, builtinVariable(it, false, v.name, v.ordinal),
-                                 v.name);
+        value = builder.CreateLoad(
+            it, builtinVariable(it, false, v.name, v.ordinal), v.name);
         break;
       }
       case ShaderVariableKind::uniform: {
         llvm::Type *it = interfaceType(dty);
         llvm::Value *u = builder.CreateLoad(it, buildUniform(it, v.name), v.name);
-        arg = asArgument(builder, fromInterface(builder, u, dty), pt);
+        value = fromInterface(builder, u, dty);
         break;
       }
       case ShaderVariableKind::image:
-        arg = buildResourceHandle(builder, pt, v.ordinal, v.name);
+        value = buildResourceHandle(builder, pt, v.ordinal, v.name);
+        break;
+      case ShaderVariableKind::uniformBlock:
+      case ShaderVariableKind::pushConstants:
+      case ShaderVariableKind::looseBlock:
+        value = wrapBlock(builder, dty, loadBlock(builder, v));
+        break;
+      case ShaderVariableKind::defaultUniform:
+        value = defaults.member(*this, builder, *entry, v.ordinal);
         break;
       default:
         llvm_unreachable("a result variable among the parameters");
       }
+      if (!v.depth) {
+        args[v.parameter + first] =
+            v.kind == ShaderVariableKind::image ? value
+                                                : asArgument(builder, value, pt);
+        continue;
+      }
+      // Into the parameter's aggregate, along the field path.
+      VarDeclaration *param = (*fd->parameters)[v.parameter];
+      Type *pty = param->type->toBasetype();
+      llvm::Value *&agg = aggregates[v.parameter];
+      if (!agg)
+        agg = llvm::UndefValue::get(DtoType(pty));
+      llvm::SmallVector<unsigned, 8> indices;
+      Type *at = pty;
+      for (int k = 0; k < v.depth; k++) {
+        StructDeclaration *sd = static_cast<TypeStruct *>(at)->sym;
+        VarDeclaration *field = sd->fields[v.path[k]];
+        indices.push_back(memberIndex(getIrType(at)->isAggr(), sd, field));
+        at = field->type->toBasetype();
+      }
+      agg = builder.CreateInsertValue(agg, value, indices);
     }
+    for (auto &[parameter, agg] : aggregates)
+      args[parameter + first] =
+          asArgument(builder, agg, tf->getParamType(parameter + first));
 
     auto *call = builder.CreateCall(tf, llf, args);
     // The helper is SPIR_FUNC; a call with the default convention would be

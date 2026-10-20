@@ -784,6 +784,12 @@ cl::opt<std::string>
                              "__traits(getTargetInfo, \"shaderProfile\") names it"),
                     cl::value_desc("name"));
 cl::opt<std::string>
+    dcomputeResources("mdcompute-resources",
+                      cl::desc("How a shader's resources are lowered: 'loose' "
+                               "uniforms, as OpenGL binds them (the default), or "
+                               "Vulkan's uniform and push-constant 'blocks'"),
+                      cl::value_desc("loose|blocks"), cl::init("loose"));
+cl::opt<std::string>
     dcomputeManifest("mdcompute-manifest",
                      cl::desc("Write the unit's shader entry points, with "
                               "their stages and profiles, as JSON to <file> "
@@ -1091,10 +1097,14 @@ void hideLLVMOptions() {
 #if LDC_LLVM_SUPPORTED_TARGET_SPIRV || LDC_LLVM_SUPPORTED_TARGET_NVPTX || LDC_LLVM_SUPPORTED_TARGET_AArch64
 // For gen/dcompute/shaderinterface.d.
 const char *dcomputeActiveProfile() { return opts::dcomputeProfile.c_str(); }
+const char *dcomputeResourceLowering() {
+  return opts::dcomputeResources.c_str();
+}
 const char *dcomputeManifestPath() { return opts::dcomputeManifest.c_str(); }
 bool dcomputeHasTargets() { return !opts::dcomputeTargets.empty(); }
 #else
 const char *dcomputeActiveProfile() { return ""; }
+const char *dcomputeResourceLowering() { return ""; }
 const char *dcomputeManifestPath() { return ""; }
 bool dcomputeHasTargets() { return false; }
 #endif

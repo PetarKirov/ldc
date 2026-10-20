@@ -147,6 +147,7 @@ extern cl::opt<bool, true> fOptimizeNothrow;
 extern cl::list<std::string> dcomputeTargets;
 extern cl::opt<std::string> dcomputeProfile;
 extern cl::opt<std::string> dcomputeManifest;
+extern cl::opt<std::string> dcomputeResources;
 extern cl::opt<std::string> dcomputeFilePrefix;
 extern cl::opt<bool> fembedDCompute;
 #else
