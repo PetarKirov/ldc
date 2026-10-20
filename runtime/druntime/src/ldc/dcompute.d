@@ -215,6 +215,44 @@ struct _profiles
     string names;
 }
 
+/++
+ + A uniform block of `T`: on Vulkan, a block with a binding whose type is `T`,
+ + laid out by `std140`; on OpenGL, one uniform per field of `T`, named after
+ + the field. A host calls an entry point with one by wrapping a `T`.
+ +/
+struct UniformBlock(T)
+{
+    T value; ///
+    alias value this;
+}
+
+/++
+ + A push-constant block of `T`: on Vulkan, one block in the `PushConstant`
+ + storage class laid out by `std430`, at most one per entry point; on
+ + OpenGL, one uniform per field of `T`. A host calls an entry point with one
+ + by wrapping a `T`.
+ +/
+struct PushConstants(T)
+{
+    T value; ///
+    alias value this;
+}
+
+/// Marks a struct as an interface struct: an entry point's parameter of it
+/// stands for its fields, each a parameter of the entry point in its place.
+struct _resources {}
+/// ditto
+enum resources = _resources();
+
+/// Fixes the binding of a resource on Vulkan: `@binding(3)`. Binding 0 is the
+/// shared sampler's.
+struct _binding
+{
+    int index;
+}
+/// ditto
+alias binding = _binding;
+
 /// The built-in variables a stage reads or writes (SPIR-V `BuiltIn`).
 enum Builtin : int
 {

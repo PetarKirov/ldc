@@ -47,6 +47,7 @@ import dmd.root.filename : FileName;
 extern (C++) const(char)* dcomputeActiveProfile();
 extern (C++) const(char)* dcomputeManifestPath();
 extern (C++) bool dcomputeHasTargets();
+extern (C++) const(char)* dcomputeResourceLowering();
 
 extern (C++):
 
@@ -66,6 +67,10 @@ enum ShaderVariableKind : int
     image,         /// a `Sampler2D` parameter: binding `ordinal`
     builtinInput,  /// a `@builtin` parameter: SPIR-V `BuiltIn` `ordinal`
     builtinOutput, /// a `@builtin` result field: SPIR-V `BuiltIn` `ordinal`
+    uniformBlock,  /// a `UniformBlock!T` on Vulkan: binding `ordinal`, std140
+    pushConstants, /// a `PushConstants!T` on Vulkan: std430
+    defaultUniform, /// a `@uniform` on Vulkan: member `ordinal` of the entry's default block
+    looseBlock,    /// a block on OpenGL: one uniform per field of its `T`
 }
 
 /// One variable of an entry point's interface.
@@ -80,6 +85,12 @@ struct ShaderVariable
     int ordinal;
     /// Its name: the declaration's, or a built-in's.
     const(char)* name;
+    /// A block's `T`, else null.
+    Type blockType;
+    /// For a field of a `@resources` parameter, the field indices from the
+    /// parameter, `depth` of them.
+    int[8] path;
+    int depth;
 }
 
 /// A shader entry point emitted by this compilation, and its interface.
@@ -92,7 +103,25 @@ struct ShaderEntry
     /// Parameters in order, then result fields in field order.
     ShaderVariable* variables;
     size_t length;
+    /// On Vulkan, the binding of the default uniform block that holds the
+    /// `@uniform` parameters, its variable's name and its type's (`SHR3`,
+    /// `SHR8`); -1 if it has none.
+    int defaultBlockBinding = -1;
+    const(char)* defaultBlockName;
+    const(char)* defaultBlockTypeName;
 }
+
+/// For the code generator: the size, under `rule` (0 std140, 1 std430), of a
+/// block member of D type `t`; the offset of field `index` of `sd`; and the
+/// stride of an array of `element`.
+uint shaderBlockSize(Type t, int rule) => cast(uint) sizeOf(t, cast(Rule) rule);
+/// ditto
+uint shaderBlockFieldOffset(StructDeclaration sd, size_t index, int rule)
+    => cast(uint) fieldOffset(sd, index, cast(Rule) rule);
+/// ditto
+uint shaderBlockArrayStride(Type element, int rule) => cast(uint) strideOf(element, cast(Rule) rule);
+/// ditto: the alignment of a block member of `t`.
+uint shaderBlockAlignment(Type t, int rule) => cast(uint) alignmentOf(t, cast(Rule) rule);
 
 /// The description of `fd` if it is a shader entry point this compilation
 /// emits, else null. `analyseShaderEntries` builds them.
@@ -362,6 +391,11 @@ const(char)[][] entryProfiles(FuncDeclaration fd, ShaderStage stage)
     fatal();
     assert(0);
 }
+
+/// Whether resources lower to Vulkan's blocks (`-mdcompute-resources=blocks`)
+/// rather than to OpenGL's plain uniforms, as the build step chooses from the
+/// active profile's capabilities.
+bool resourcesAsBlocks() => dcomputeResourceLowering().toDString() == "blocks";
 
 bool isEmittedForActiveProfile(FuncDeclaration fd, ShaderStage stage)
 {
@@ -704,6 +738,230 @@ void recordInterfaceUse(ShaderStage stage, VarDeclaration vd, const(char)* entry
     }
 }
 
+// ---- resources ---------------------------------------------------------------
+
+enum ItemKind
+{
+    input,
+    builtin,
+    uniform,
+    image,
+    uniformBlock,
+    pushConstants,
+}
+
+/// One parameter of an entry point, or a field of a `@resources` struct that
+/// stands for one.
+struct Item
+{
+    ItemKind kind;
+    VarDeclaration decl;
+    int parameter;
+    int[] path;         // the field indices from the parameter, if flattened
+    int fixedBinding = -1;
+    Type blockType;     // a block's `T`
+    int builtinSpirv;
+    const(char)* builtinName;
+}
+
+/// `ldc.dcompute`'s `UniformBlock!T` or `PushConstants!T`, and its `T`.
+Type blockOf(Type t, out bool push)
+{
+    auto ts = t.toBasetype().isTypeStruct();
+    if (!ts || !isFromLdcDCompute(ts.sym) || ts.sym.fields.length != 1)
+        return null;
+    if (ts.sym.ident == Id.dcUniformBlock)
+        push = false;
+    else if (ts.sym.ident == Id.dcPushConstants)
+        push = true;
+    else
+        return null;
+    return ts.sym.fields[0].type.toBasetype();
+}
+
+void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* attr,
+    ShaderStage stage, ref Item[] items)
+{
+    const name = vd.ident.toChars();
+    auto dty = vd.type.toBasetype();
+    auto ts = dty.isTypeStruct();
+    const isInput = hasMarker(vd, Id.udaShaderInput);
+    const isUniform = hasMarker(vd, Id.udaShaderUniform);
+    const builtinId = builtinOf(vd);
+    const isBuiltin = builtinId >= 0;
+    const isImage = ts && ts.sym.ident == Id.dcSampler2D && isFromLdcDCompute(ts.sym);
+    bool push;
+    auto blockType = blockOf(dty, push);
+    const isResources = ts && dcomputeAttribute(ts.sym, Id.udaShaderResources) !is null;
+    const what = path.length ? "resource field".ptr : "parameter".ptr;
+    auto bindingAttr = dcomputeAttribute(vd, Id.udaShaderBinding, Type.tint32);
+    const fixed = bindingAttr ? cast(int) (*bindingAttr.elements)[0].toInteger() : -1;
+
+    if (isBuiltin && (isInput || isUniform))
+    {
+        error(vd.loc, "%s parameter `%s` is marked both `@builtin` and `%s`; it must be one",
+            attr, name, isInput ? "@input".ptr : "@uniform".ptr);
+        fatal();
+    }
+    if (isInput && isUniform)
+    {
+        error(vd.loc, "%s parameter `%s` is marked both `@input` and `@uniform`; it must be one", attr, name);
+        fatal();
+    }
+    if ((isInput || isUniform) && (isImage || blockType || isResources))
+    {
+        error(vd.loc, isImage
+            ? "%s parameter `%s` is a `Sampler2D`, which takes no `@input` or `@uniform` marker"
+            : "%s parameter `%s` is a resource, which takes no `@input` or `@uniform` marker",
+            attr, name);
+        fatal();
+    }
+    if (path.length && (isInput || isBuiltin))
+    {
+        error(vd.loc, "%s resource field `%s` is marked `%s`; a `@resources` struct holds only resources",
+            attr, name, isInput ? "@input".ptr : "@builtin".ptr);
+        fatal();
+    }
+
+    Item it;
+    it.decl = vd;
+    it.parameter = parameter;
+    it.path = path;
+    it.fixedBinding = fixed;
+    if (isResources)
+    {
+        foreach (k, field; ts.sym.fields)
+            collectItems(field, parameter, path ~ cast(int) k, attr, stage, items);
+        return;
+    }
+    if (isBuiltin)
+    {
+        auto b = checkBuiltin(vd, builtinId, what, stage, false);
+        it.kind = ItemKind.builtin;
+        it.builtinSpirv = b.spirv;
+        it.builtinName = b.name.ptr;
+        items ~= it;
+        return;
+    }
+    if (blockType)
+    {
+        if (!blockType.isTypeStruct())
+        {
+            error(vd.loc, "%s %s `%s` cannot be `%s`: a block is a struct of uniform types",
+                attr, what, name, vd.type.toChars());
+            fatal();
+        }
+        if (auto why = refusal(blockType, Crossing.uniform))
+        {
+            error(vd.loc, "%s %s `%s` cannot be `%s`: %s", attr, what, name, vd.type.toChars(), why);
+            fatal();
+        }
+        checkTranslatable(vd, stage == ShaderStage.vertex ? "`@vertex` parameter" : "`@fragment` parameter",
+            blockType);
+        it.kind = push ? ItemKind.pushConstants : ItemKind.uniformBlock;
+        it.blockType = blockType;
+        items ~= it;
+        return;
+    }
+    if (isInput || isUniform)
+    {
+        const crossing = isUniform ? Crossing.uniform
+            : stage == ShaderStage.vertex ? Crossing.vertexInput : Crossing.varying;
+        if (auto why = refusal(dty, crossing))
+        {
+            error(vd.loc, "%s parameter `%s` cannot be `%s`: %s", attr, name, vd.type.toChars(), why);
+            fatal();
+        }
+    }
+    else if (!isImage)
+    {
+        error(vd.loc, path.length
+            ? "%s resource field `%s` must be a resource: `@uniform`, a `Sampler2D`, a block or a `@resources` struct"
+            : "%s parameter `%s` must be marked `@input`, `@uniform` or `@builtin`, or be a `Sampler2D`",
+            attr, name);
+        fatal();
+    }
+    checkTranslatable(vd, stage == ShaderStage.vertex ? "`@vertex` parameter" : "`@fragment` parameter",
+        isUniform ? dty : null);
+    it.kind = isInput ? ItemKind.input : isUniform ? ItemKind.uniform : ItemKind.image;
+    items ~= it;
+}
+
+// ---- block layout -------------------------------------------------------------
+//
+// std140 and std430, as the OpenGL 4.6 specification defines them in
+// §7.6.2.2: what `sparkles.shaders.layout` computes for the host, so that the
+// host and the device agree on every byte.
+
+enum Rule : int
+{
+    std140 = 0,
+    std430 = 1,
+}
+
+size_t roundUp(size_t n, size_t to) => (n + to - 1) / to * to;
+
+size_t vectorLengthOf(Type t)
+{
+    auto tv = t.isTypeVector();
+    return tv ? cast(size_t) (cast(TypeSArray) tv.basetype).dim.toInteger() : 0;
+}
+
+size_t alignmentOf(Type t, Rule rule)
+{
+    t = t.toBasetype();
+    if (auto n = vectorLengthOf(t))
+        return n == 2 ? 8 : 16;
+    if (auto sa = t.isTypeSArray())
+    {
+        const element = alignmentOf(sa.nextOf(), rule);
+        return rule == Rule.std140 ? roundUp(element, 16) : element;
+    }
+    if (auto ts = t.isTypeStruct())
+    {
+        size_t a = 4;
+        foreach (field; ts.sym.fields)
+            if (alignmentOf(field.type, rule) > a)
+                a = alignmentOf(field.type, rule);
+        return rule == Rule.std140 ? roundUp(a, 16) : a;
+    }
+    return 4;
+}
+
+size_t strideOf(Type element, Rule rule)
+    => roundUp(sizeOf(element, rule),
+        rule == Rule.std140 ? roundUp(alignmentOf(element, rule), 16) : alignmentOf(element, rule));
+
+size_t sizeOf(Type t, Rule rule)
+{
+    t = t.toBasetype();
+    if (auto n = vectorLengthOf(t))
+        return 4 * n;
+    if (auto sa = t.isTypeSArray())
+        return strideOf(sa.nextOf(), rule) * cast(size_t) sa.dim.toInteger();
+    if (auto ts = t.isTypeStruct())
+    {
+        size_t at = 0;
+        foreach (field; ts.sym.fields)
+            at = roundUp(at, alignmentOf(field.type, rule)) + sizeOf(field.type, rule);
+        return roundUp(at, alignmentOf(t, rule));
+    }
+    return 4;
+}
+
+size_t fieldOffset(StructDeclaration sd, size_t index, Rule rule)
+{
+    size_t at = 0;
+    foreach (k, field; sd.fields)
+    {
+        at = roundUp(at, alignmentOf(field.type, rule));
+        if (k == index)
+            return at;
+        at += sizeOf(field.type, rule);
+    }
+    assert(0, "no such field");
+}
+
 // ---- an entry point's interface -------------------------------------------------
 
 const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
@@ -746,76 +1004,162 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
         }
     }
 
-    int nextLocation = 0;
-    int nextImageBinding = 1; // binding 0 is the shared sampler
+    // The parameters, with every `@resources` struct flattened into its
+    // fields (`SHR2`), each a resource of the entry point in its place.
+    Item[] items;
     const nparams = fd.parameters ? fd.parameters.length : 0;
     foreach (i; 0 .. nparams)
-    {
-        auto vd = (*fd.parameters)[i];
-        const name = vd.ident.toChars();
-        auto dty = vd.type.toBasetype();
-        auto ts = dty.isTypeStruct();
-        const isInput = hasMarker(vd, Id.udaShaderInput);
-        const isUniform = hasMarker(vd, Id.udaShaderUniform);
-        const builtinId = builtinOf(vd);
-        const isBuiltin = builtinId >= 0;
-        const isImage = ts && ts.sym.ident == Id.dcSampler2D && isFromLdcDCompute(ts.sym);
-        if (isBuiltin && (isInput || isUniform))
+        collectItems((*fd.parameters)[i], cast(int) i, null, attr, stage, items);
+
+    const blocks = resourcesAsBlocks();
+    int nextLocation = 0;
+
+    // Bindings (`SHR7`). OpenGL: the shared sampler at 0, the images from 1
+    // in order. Vulkan: the sampler's 0 is reserved, a `@binding` fixes one,
+    // and the rest take the next free binding in order, the default uniform
+    // block at the place of the first `@uniform`.
+    bool[int] taken;
+    foreach (ref it; items)
+        if (it.fixedBinding >= 0)
         {
-            error(vd.loc, "%s parameter `%s` is marked both `@builtin` and `%s`; it must be one",
-                attr, name, isInput ? "@input".ptr : "@uniform".ptr);
-            fatal();
-        }
-        if (isInput && isUniform)
-        {
-            error(vd.loc, "%s parameter `%s` is marked both `@input` and `@uniform`; it must be one", attr, name);
-            fatal();
-        }
-        if ((isInput || isUniform) && isImage)
-        {
-            error(vd.loc, "%s parameter `%s` is a `Sampler2D`, which takes no `@input` or `@uniform` marker",
-                attr, name);
-            fatal();
-        }
-        if (isBuiltin)
-        {
-            auto b = checkBuiltin(vd, builtinId, "parameter", stage, false);
-            vars ~= ShaderVariable(ShaderVariableKind.builtinInput, vd, cast(int) i, b.spirv, b.name.ptr);
-            continue;
-        }
-        if (isInput || isUniform)
-        {
-            const crossing = isUniform ? Crossing.uniform
-                : stage == ShaderStage.vertex ? Crossing.vertexInput : Crossing.varying;
-            if (auto why = refusal(dty, crossing))
+            if (it.fixedBinding == 0)
             {
-                error(vd.loc, "%s parameter `%s` cannot be `%s`: %s", attr, name, vd.type.toChars(), why);
+                error(it.decl.loc, "%s resource `%s` cannot be at binding 0, which is the shared sampler's",
+                    attr, it.decl.ident.toChars());
                 fatal();
             }
+            if (auto other = it.fixedBinding in taken)
+            {
+                error(it.decl.loc, "%s resources `%s` and another are both at binding %d", attr,
+                    it.decl.ident.toChars(), it.fixedBinding);
+                fatal();
+            }
+            taken[it.fixedBinding] = true;
         }
-        checkTranslatable(vd, stage == ShaderStage.vertex ? "`@vertex` parameter" : "`@fragment` parameter",
-            isUniform ? dty : null);
-        if (isInput)
+    int nextBinding = 1;
+    int nextFreeBinding()
+    {
+        while (nextBinding in taken)
+            nextBinding++;
+        taken[nextBinding] = true;
+        return nextBinding++;
+    }
+
+    // Every interface name of the entry point, as lowered, is distinct
+    // (`SHF2`).
+    VarDeclaration[string] names;
+    void claim(const(char)[] name, VarDeclaration vd, VarDeclaration at = null)
+    {
+        if (auto prior = name in names)
         {
-            recordInterfaceUse(stage, vd, entry, "input", nextLocation);
-            vars ~= ShaderVariable(ShaderVariableKind.input, vd, cast(int) i, nextLocation++, name);
-        }
-        else if (isUniform)
-        {
-            recordInterfaceUse(stage, vd, entry, "uniform", -1);
-            vars ~= ShaderVariable(ShaderVariableKind.uniform, vd, cast(int) i, -1, name);
-        }
-        else if (isImage)
-        {
-            recordInterfaceUse(stage, vd, entry, "image", nextImageBinding);
-            vars ~= ShaderVariable(ShaderVariableKind.image, vd, cast(int) i, nextImageBinding++, name);
-        }
-        else
-        {
-            error(vd.loc, "%s parameter `%s` must be marked `@input`, `@uniform` or `@builtin`, or be a `Sampler2D`",
-                attr, name);
+            error((at ? at : vd).loc, "%s entry point `%s` has two interface variables named `%.*s`: `%s` and `%s`",
+                attr, entry, cast(int) name.length, name.ptr, prior.toPrettyChars(), vd.toPrettyChars());
             fatal();
         }
+        names[name.idup] = vd;
+    }
+
+    int defaultMembers = 0;
+    bool pushConstantsSeen;
+    foreach (ref it; items)
+    {
+        auto vd = it.decl;
+        const name = vd.ident.toChars();
+        ShaderVariable v;
+        v.decl = vd;
+        v.parameter = it.parameter;
+        v.name = name;
+        v.depth = cast(int) it.path.length;
+        foreach (k, p; it.path)
+            v.path[k] = p;
+        final switch (it.kind)
+        {
+        case ItemKind.builtin:
+            v.kind = ShaderVariableKind.builtinInput;
+            v.ordinal = it.builtinSpirv;
+            v.name = it.builtinName;
+            break;
+        case ItemKind.input:
+            claim(vd.ident.toString(), vd);
+            recordInterfaceUse(stage, vd, entry, "input", nextLocation);
+            v.kind = ShaderVariableKind.input;
+            v.ordinal = nextLocation++;
+            break;
+        case ItemKind.uniform:
+            if (blocks)
+            {
+                // A member of the entry point's default uniform block
+                // (`SHR3`), its own variable, so not an interface name of
+                // the stage.
+                if (e.defaultBlockBinding < 0)
+                    e.defaultBlockBinding = nextFreeBinding();
+                v.kind = ShaderVariableKind.defaultUniform;
+                v.ordinal = defaultMembers++;
+            }
+            else
+            {
+                claim(vd.ident.toString(), vd);
+                recordInterfaceUse(stage, vd, entry, "uniform", -1);
+                v.kind = ShaderVariableKind.uniform;
+                v.ordinal = -1;
+            }
+            break;
+        case ItemKind.image:
+            claim(vd.ident.toString(), vd);
+            const binding = it.fixedBinding >= 0 && blocks ? it.fixedBinding
+                : blocks ? nextFreeBinding() : nextBinding++;
+            recordInterfaceUse(stage, vd, entry, "image", binding);
+            v.kind = ShaderVariableKind.image;
+            v.ordinal = binding;
+            break;
+        case ItemKind.uniformBlock:
+        case ItemKind.pushConstants:
+            const push = it.kind == ItemKind.pushConstants;
+            if (push)
+            {
+                if (pushConstantsSeen)
+                {
+                    error(vd.loc, "%s entry point `%s` declares a second push-constant block, `%s`; it may declare one",
+                        attr, entry, name);
+                    fatal();
+                }
+                pushConstantsSeen = true;
+                const size = sizeOf(it.blockType, Rule.std430);
+                if (size > 128)
+                {
+                    error(vd.loc, "%s push-constant block `%s` is %u bytes (std430), over the 128 every Vulkan implementation offers",
+                        attr, name, cast(uint) size);
+                    fatal();
+                }
+            }
+            v.blockType = it.blockType;
+            if (blocks)
+            {
+                claim(vd.ident.toString(), vd);
+                v.kind = push ? ShaderVariableKind.pushConstants : ShaderVariableKind.uniformBlock;
+                v.ordinal = push ? -1 : it.fixedBinding >= 0 ? it.fixedBinding : nextFreeBinding();
+                recordInterfaceUse(stage, vd, entry, push ? "push-constant block" : "uniform block",
+                    v.ordinal);
+            }
+            else
+            {
+                // One uniform per field, named after the field.
+                foreach (field; it.blockType.isTypeStruct().sym.fields)
+                {
+                    claim(field.ident.toString(), field, vd);
+                    recordInterfaceUse(stage, field, entry, "uniform", -1);
+                }
+                v.kind = ShaderVariableKind.looseBlock;
+                v.ordinal = -1;
+            }
+            break;
+        }
+        vars ~= v;
+    }
+    if (e.defaultBlockBinding >= 0)
+    {
+        e.defaultBlockName = (entry.toDString() ~ "Uniforms\0").ptr;
+        e.defaultBlockTypeName = (entry.toDString() ~ "UniformsBlock\0").ptr;
     }
 
     if (e.result)
