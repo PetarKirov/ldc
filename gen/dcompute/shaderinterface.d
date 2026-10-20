@@ -48,6 +48,7 @@ extern (C++) const(char)* dcomputeActiveProfile();
 extern (C++) const(char)* dcomputeManifestPath();
 extern (C++) bool dcomputeHasTargets();
 extern (C++) const(char)* dcomputeResourceLowering();
+extern (C++) bool dcomputeReportInt64();
 
 extern (C++):
 
@@ -146,6 +147,8 @@ void analyseShaderEntries(ref Modules modules)
             if (auto e = describe(fd, stage))
                 entries[fd] = e;
         });
+    if (dcomputeReportInt64())
+        reportInt64(entries.keys);
 }
 
 /// With `-mdcompute-manifest=<file>`, writes the unit's shader entry points,
@@ -736,6 +739,87 @@ void recordInterfaceUse(ShaderStage stage, VarDeclaration vd, const(char)* entry
             kind, name, what.ptr, ordinal, entry, what.ptr, first.ordinal, first.entry, what.ptr);
         fatal();
     }
+}
+
+// ---- 64-bit integers -------------------------------------------------------------
+
+/**
+With `-mdcompute-report-int64`, names the D source line of every 64-bit
+integer operation in code the entry points reach (`SHM6`). The build step
+asks for it when a profile that denies `int64` meets a module that declares
+`Int64`: the module says that something computes in 64 bits, this says
+where. Arithmetic on `size_t` (a `foreach` index, `cast(size_t) i + 1`) is
+the usual source; an `int` index widened only to address an array is not
+reported, as it reaches the module in 32 bits.
+*/
+void reportInt64(FuncDeclaration[] roots)
+{
+    import dmd.visitor : SemanticTimeTransitiveVisitor;
+
+    static bool is64(Type t)
+    {
+        if (!t)
+            return false;
+        const ty = t.toBasetype().ty;
+        return ty == TY.Tint64 || ty == TY.Tuns64;
+    }
+
+    extern (C++) final class Reporter : SemanticTimeTransitiveVisitor
+    {
+        alias visit = SemanticTimeTransitiveVisitor.visit;
+        FuncDeclaration[] queue;
+        bool[void*] seen;
+
+        void enqueue(FuncDeclaration fd)
+        {
+            if (fd && fd.fbody && cast(void*) fd !in seen)
+            {
+                seen[cast(void*) fd] = true;
+                queue ~= fd;
+            }
+        }
+
+        void report(Expression e)
+        {
+            message(e.loc, "64-bit integer operation `%s` (`%s`); the profile denies `int64`",
+                e.toChars(), e.type.toChars());
+        }
+
+        override void visit(BinExp e)
+        {
+            const constant = e.e1.isIntegerExp() && e.e2.isIntegerExp();
+            const move = e.isAssignExp() || e.isConstructExp() || e.isBlitExp();
+            if (!constant && !move && (is64(e.e1.type) || is64(e.e2.type)))
+                report(e);
+            super.visit(e);
+        }
+
+        override void visit(NegExp e)
+        {
+            if (is64(e.type))
+                report(e);
+            super.visit(e);
+        }
+
+        override void visit(ComExp e)
+        {
+            if (is64(e.type))
+                report(e);
+            super.visit(e);
+        }
+
+        override void visit(CallExp e)
+        {
+            enqueue(e.f);
+            super.visit(e);
+        }
+    }
+
+    auto r = new Reporter();
+    foreach (fd; roots)
+        r.enqueue(fd);
+    for (size_t i = 0; i < r.queue.length; i++)
+        r.queue[i].fbody.accept(r);
 }
 
 // ---- resources ---------------------------------------------------------------
