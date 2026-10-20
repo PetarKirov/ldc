@@ -48,6 +48,7 @@ struct Id
     static Identifier *dcSampler2D;
     static Identifier *dcUniformBlock;
     static Identifier *dcPushConstants;
+    static Identifier *dcCapability;
     static Identifier *dcSharedSampler;
     static Identifier *object;
     static Identifier *core;

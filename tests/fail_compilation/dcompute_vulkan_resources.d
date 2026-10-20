@@ -6,18 +6,18 @@
 
 // REQUIRES: target_SPIRV && atleast_llvm23
 // RUN: split-file %s %t
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/twopush.d 2>&1 | FileCheck %t/twopush.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/bigpush.d 2>&1 | FileCheck %t/bigpush.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/binding0.d 2>&1 | FileCheck %t/binding0.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/samebinding.d 2>&1 | FileCheck %t/samebinding.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/twopush.d 2>&1 | FileCheck %t/twopush.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/bigpush.d 2>&1 | FileCheck %t/bigpush.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/binding0.d 2>&1 | FileCheck %t/binding0.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/samebinding.d 2>&1 | FileCheck %t/samebinding.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=gl330 -I%t %t/clash.d 2>&1 | FileCheck %t/clash.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/notresource.d 2>&1 | FileCheck %t/notresource.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/colour.d 2>&1 | FileCheck %t/colour.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/defaultblock.d 2>&1 | FileCheck %t/defaultblock.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/deep.d 2>&1 | FileCheck %t/deep.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/notresource.d 2>&1 | FileCheck %t/notresource.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/colour.d 2>&1 | FileCheck %t/colour.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/defaultblock.d 2>&1 | FileCheck %t/defaultblock.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/deep.d 2>&1 | FileCheck %t/deep.d
 // RUN: %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=gl330 -mdcompute-file-prefix=%t/glbinding -I%t %t/glbinding.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/dupuniform.d 2>&1 | FileCheck %t/dupuniform.d
-// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -I%t %t/vertexclash.d 2>&1 | FileCheck %t/vertexclash.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/dupuniform.d 2>&1 | FileCheck %t/dupuniform.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -I%t %t/vertexclash.d 2>&1 | FileCheck %t/vertexclash.d
 
 //--- twopush.d
 @compute(CompileFor.deviceOnly) module twopush;

@@ -253,6 +253,40 @@ struct _binding
 /// ditto
 alias binding = _binding;
 
+/++
+ + The vocabulary of the `shader` capability domain: what a shader target may
+ + offer. A compilation is granted a set of them on the command line,
+ + `-capabilities=shader:<name>,<name>,...`, by the build step that owns the
+ + profiles (which target grants what); the compiler checks the names against
+ + this enum and enforces what it knows each one to mean:
+ +
+ + $(UL
+ +   $(LI `vertexStage`, `fragmentStage`: an entry point of that stage;)
+ +   $(LI `uniformBlocks` without `looseUniforms`: resources lower to Vulkan's
+ +        uniform and push-constant blocks, else to plain uniforms;)
+ +   $(LI `intVertexInputs`: an integer vertex input.))
+ +
+ + Without a `shader` grant the compiler checks none of them, and resources
+ + lower to plain uniforms. The grant is taken as given: its implications
+ + (`vertexStage` implies `shader`) are the build step's to close over.
+ +/
+enum Capability : int
+{
+    shader,              /// graphics-stage code at all (SPIR-V `Shader`)
+    vertexStage,         /// the vertex stage
+    fragmentStage,       /// the fragment stage
+    looseUniforms,       /// uniforms outside any block
+    uniformBlocks,       /// uniform blocks with a binding
+    pushConstants,       /// push-constant blocks
+    sampledImages,       /// sampled 2-D images
+    intVertexInputs,     /// integer (and integer-vector) vertex inputs
+    int64,               /// 64-bit integers
+    int16,               /// 16-bit integers
+    int8,                /// 8-bit integers
+    float64,             /// 64-bit floats
+    bufferDeviceAddress, /// buffer device addresses
+}
+
 /// The built-in variables a stage reads or writes (SPIR-V `BuiltIn`).
 enum Builtin : int
 {

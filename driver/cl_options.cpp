@@ -783,12 +783,16 @@ cl::opt<std::string>
                              "only the entry points it lists are emitted, and "
                              "__traits(getTargetInfo, \"shaderProfile\") names it"),
                     cl::value_desc("name"));
-cl::opt<std::string>
-    dcomputeResources("mdcompute-resources",
-                      cl::desc("How a shader's resources are lowered: 'loose' "
-                               "uniforms, as OpenGL binds them (the default), or "
-                               "Vulkan's uniform and push-constant 'blocks'"),
-                      cl::value_desc("loose|blocks"), cl::init("loose"));
+// What the compilation may use, by domain: the floor its target grants. A
+// library owns which target grants what (a shader profile's capabilities, a
+// CPU baseline); the compiler knows each domain's vocabulary and enforces it.
+static cl::list<std::string>
+    capabilities("capabilities",
+                 cl::desc("The capabilities the compilation is granted in a "
+                          "domain, <domain>:<name>,<name>,... (repeatable). "
+                          "The 'shader' domain's names are the members of "
+                          "ldc.dcompute.Capability"),
+                 cl::value_desc("domain:names"), cl::ZeroOrMore);
 cl::opt<bool>
     dcomputeReportInt64("mdcompute-report-int64",
                         cl::desc("Name the source line of every 64-bit integer "
@@ -1099,18 +1103,19 @@ void hideLLVMOptions() {
 
 } // namespace opts
 
+// For gen/dcompute/shaderinterface.d: each `-capabilities` value
+// (`domain:names`), and how many there are.
+size_t capabilityGrantCount() { return opts::capabilities.size(); }
+const char *capabilityGrant(size_t i) { return opts::capabilities[i].c_str(); }
+
 #if LDC_LLVM_SUPPORTED_TARGET_SPIRV || LDC_LLVM_SUPPORTED_TARGET_NVPTX || LDC_LLVM_SUPPORTED_TARGET_AArch64
 // For gen/dcompute/shaderinterface.d.
 const char *dcomputeActiveProfile() { return opts::dcomputeProfile.c_str(); }
-const char *dcomputeResourceLowering() {
-  return opts::dcomputeResources.c_str();
-}
 bool dcomputeReportInt64() { return opts::dcomputeReportInt64; }
 const char *dcomputeManifestPath() { return opts::dcomputeManifest.c_str(); }
 bool dcomputeHasTargets() { return !opts::dcomputeTargets.empty(); }
 #else
 const char *dcomputeActiveProfile() { return ""; }
-const char *dcomputeResourceLowering() { return ""; }
 bool dcomputeReportInt64() { return false; }
 const char *dcomputeManifestPath() { return ""; }
 bool dcomputeHasTargets() { return false; }

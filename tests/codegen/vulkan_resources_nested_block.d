@@ -3,7 +3,7 @@
 // struct's name; the member's type is a copy without the decoration.
 
 // REQUIRES: target_SPIRV && atleast_llvm23
-// RUN: %ldc -O2 -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -mdcompute-resources=blocks -mdcompute-file-prefix=vk_nested -output-o %s
+// RUN: %ldc -O2 -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,sampledImages,intVertexInputs -mdcompute-file-prefix=vk_nested -output-o %s
 // RUN: spirv-dis vk_nested_vulkan130_64.spv -o - | FileCheck %s
 // RUN: spirv-val --target-env vulkan1.3 vk_nested_vulkan130_64.spv
 

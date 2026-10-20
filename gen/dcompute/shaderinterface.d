@@ -47,7 +47,9 @@ import dmd.root.filename : FileName;
 extern (C++) const(char)* dcomputeActiveProfile();
 extern (C++) const(char)* dcomputeManifestPath();
 extern (C++) bool dcomputeHasTargets();
-extern (C++) const(char)* dcomputeResourceLowering();
+// In driver/cl_options.cpp: the `-capabilities` values, `domain:names` each.
+extern (C++) size_t capabilityGrantCount();
+extern (C++) const(char)* capabilityGrant(size_t i);
 extern (C++) bool dcomputeReportInt64();
 
 extern (C++):
@@ -395,10 +397,112 @@ const(char)[][] entryProfiles(FuncDeclaration fd, ShaderStage stage)
     assert(0);
 }
 
-/// Whether resources lower to Vulkan's blocks (`-mdcompute-resources=blocks`)
-/// rather than to OpenGL's plain uniforms, as the build step chooses from the
-/// active profile's capabilities.
-bool resourcesAsBlocks() => dcomputeResourceLowering().toDString() == "blocks";
+// ---- capabilities -------------------------------------------------------------
+
+/**
+The `shader` capabilities the compilation is granted (`-capabilities=shader:…`),
+checked against `ldc.dcompute.Capability`. A library owns which profile grants
+what; the compiler knows what each capability means and enforces it. Without
+a `shader` grant, nothing that needs one is checked, and resources lower to
+plain uniforms.
+*/
+struct ShaderGrants
+{
+    bool given;          /// whether any `shader` grant was passed
+    bool[string] names;  /// the capabilities granted
+
+    bool opBinaryRight(string op : "in")(string name) const => (name in names) !is null;
+}
+
+/// The compilation's `shader` grants, read and checked on first use.
+ref const(ShaderGrants) shaderGrants()
+{
+    __gshared ShaderGrants grants;
+    __gshared bool read;
+    if (read)
+        return grants;
+    read = true;
+    const vocabulary = capabilityVocabulary();
+    foreach (i; 0 .. capabilityGrantCount())
+    {
+        const value = capabilityGrant(i).toDString();
+        size_t colon = value.length;
+        foreach (k, c; value)
+            if (c == ':')
+            {
+                colon = k;
+                break;
+            }
+        const domain = value[0 .. colon];
+        if (domain != "shader")
+        {
+            error(Loc.initial, "`-capabilities=%.*s`: `%.*s` is not a capability domain; the domains are `shader`",
+                cast(int) value.length, value.ptr, cast(int) domain.length, domain.ptr);
+            fatal();
+        }
+        grants.given = true;
+        const list = colon < value.length ? value[colon + 1 .. $] : null;
+        size_t start = 0;
+        foreach (k; 0 .. list.length + 1)
+            if (k == list.length || list[k] == ',')
+            {
+                const name = list[start .. k];
+                start = k + 1;
+                if (!name.length)
+                    continue;
+                if (vocabulary.length && !vocabulary.canFindName(name))
+                {
+                    error(Loc.initial, "`%.*s` is not a shader capability; the capabilities are the members of `ldc.dcompute.Capability`: %s",
+                        cast(int) name.length, name.ptr, vocabulary.joinNames().ptr);
+                    fatal();
+                }
+                grants.names[name.idup] = true;
+            }
+    }
+    return grants;
+}
+
+/// The members of `ldc.dcompute.Capability`, if the compilation imports it.
+const(char)[][] capabilityVocabulary()
+{
+    const(char)[][] names;
+    foreach (m; Module.amodules[])
+    {
+        if (m.toPrettyChars().toDString() != "ldc.dcompute" || !m.members)
+            continue;
+        foreach (s; (*m.members)[])
+            if (auto ed = s.isEnumDeclaration())
+                if (ed.ident == Id.dcCapability && ed.members)
+                    foreach (em; (*ed.members)[])
+                        if (em.ident)
+                            names ~= em.ident.toString();
+    }
+    return names;
+}
+
+bool canFindName(const(const(char)[])[] names, const(char)[] name)
+{
+    foreach (n; names)
+        if (n == name)
+            return true;
+    return false;
+}
+
+string joinNames(const(const(char)[])[] names)
+{
+    string r;
+    foreach (i, n; names)
+        r ~= (i ? ", `" : "`") ~ n ~ "`";
+    return r ~ "\0";
+}
+
+/// Whether resources lower to Vulkan's blocks rather than to OpenGL's plain
+/// uniforms: a profile that grants uniform blocks and not loose uniforms.
+bool resourcesAsBlocks()
+    => shaderGrants().given && "uniformBlocks" in shaderGrants() && !("looseUniforms" in shaderGrants());
+
+/// Whether the profile grants `name`, or no grant was passed to check against.
+bool grantedOrUnchecked(string name) => !shaderGrants().given || name in shaderGrants();
 
 bool isEmittedForActiveProfile(FuncDeclaration fd, ShaderStage stage)
 {
@@ -498,6 +602,15 @@ enum Crossing
     vertexInput,
     output,
     uniform,
+}
+
+/// Whether `t` is an `int`, a `uint` or a vector of them.
+bool isIntegerScalarOrVector(Type t)
+{
+    t = t.toBasetype();
+    if (auto tv = t.isTypeVector())
+        t = tv.elementType();
+    return t.ty == TY.Tint32 || t.ty == TY.Tuns32;
 }
 
 /// Why `t` cannot cross as `crossing`, or null if it can.
@@ -1087,6 +1200,16 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
     }
     entryNames[entryName] = fd;
 
+    // The stage must be one the profile grants (`SHF7`).
+    const stageCap = stage == ShaderStage.vertex ? "vertexStage" : "fragmentStage";
+    if (!grantedOrUnchecked(stageCap))
+    {
+        error(fd.loc, "%s entry point `%s` is a %s shader, which the profile `%s` does not grant (`%s`)",
+            attr, entry, stage == ShaderStage.vertex ? "vertex".ptr : "fragment".ptr,
+            dcomputeActiveProfile(), stageCap.ptr);
+        fatal();
+    }
+
     auto e = new ShaderEntry(fd, stage);
     ShaderVariable[] vars;
 
@@ -1204,6 +1327,14 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
             v.name = it.builtinName;
             break;
         case ItemKind.input:
+            // An integer vertex input needs a profile that grants it (`SHF5`).
+            if (stage == ShaderStage.vertex && isIntegerScalarOrVector(vd.type)
+                && !grantedOrUnchecked("intVertexInputs"))
+            {
+                error(vd.loc, "%s parameter `%s` is an integer vertex input, which the profile `%s` does not grant (`intVertexInputs`)",
+                    attr, name, dcomputeActiveProfile());
+                fatal();
+            }
             claim(vd.ident.toString(), vd);
             recordInterfaceUse(stage, vd, entry, "input", nextLocation);
             v.kind = ShaderVariableKind.input;
