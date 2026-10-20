@@ -39,6 +39,7 @@
 #include "llvm/Analysis/CallGraph.h"
 #include <cstring>
 #include <map>
+#include <tuple>
 #include <string>
 
 using namespace dmd;
@@ -283,15 +284,15 @@ public:
                     *llvm::MDNode::get(ctx, {llvm::MDNode::get(ctx, pair)}));
   }
 
-  /// The LLVM name of a stage's interface variable. A fragment stage's are
-  /// its names; a vertex stage's are qualified, since its outputs share their
-  /// names with the fragment inputs they feed, and carry the name in
-  /// `spirv.Name`.
+  /// The LLVM name of a stage's interface variable, qualified by its stage
+  /// and direction: entry points of every stage share one module, where a
+  /// vertex output shares its name with the fragment input it feeds, and a
+  /// push-constant block or a uniform may have an input's name. The variable
+  /// carries its own name in `spirv.Name`.
   static std::string interfaceGlobalName(ShaderStage stage, llvm::StringRef name,
                                          bool output) {
-    if (stage == ShaderStage::fragment)
-      return name.str();
-    return (name + (output ? ".vertex.out" : ".vertex.in")).str();
+    const char *qualifier = stage == ShaderStage::fragment ? ".fragment" : ".vertex";
+    return (name + qualifier + (output ? ".out" : ".in")).str();
   }
 
   /// An interface variable (`Input`/`Output` storage class): thread-local,
@@ -482,7 +483,10 @@ public:
     llvm::StructType *type = nullptr;
     llvm::SmallVector<unsigned, 8> members; // a D field's LLVM member index
   };
-  std::map<std::pair<StructDeclaration *, int>, BlockStruct> blockStructs;
+  // By struct, layout rule, and whether it is a block's own type (decorated
+  // `Block`) or a member of one: SPIR-V does not let one block nest in
+  // another, so a struct used both ways is two types.
+  std::map<std::tuple<StructDeclaration *, int, bool>, BlockStruct> blockStructs;
 
   llvm::Type *paddingType(unsigned bytes) {
     return llvm::TargetExtType::get(ctx, "spirv.Padding", {}, {bytes});
@@ -515,9 +519,14 @@ public:
     }
     if (size > at)
       members.push_back(paddingType(size - at));
+    // LLVM names a type uniquely, and a struct may be two types (a block, and
+    // a member of another); `spirv.TypeNames` gives both the D name.
     b.type = llvm::StructType::create(ctx, members, name, /*isPacked=*/true);
+    auto *key = llvm::ConstantAsMetadata::get(llvm::PoisonValue::get(b.type));
+    _ir->module.getOrInsertNamedMetadata("spirv.TypeNames")
+        ->addOperand(llvm::MDNode::get(ctx, {key, llvm::MDString::get(ctx, name)}));
     llvm::SmallVector<llvm::Metadata *, 16> names;
-    names.push_back(llvm::ConstantAsMetadata::get(llvm::PoisonValue::get(b.type)));
+    names.push_back(key);
     for (const char *n : memberNames)
       names.push_back(llvm::MDString::get(ctx, n));
     _ir->module.getOrInsertNamedMetadata("spirv.MemberNames")
@@ -525,8 +534,9 @@ public:
     return b;
   }
 
-  const BlockStruct &blockStruct(StructDeclaration *sd, int rule, Loc loc) {
-    auto key = std::make_pair(sd, rule);
+  const BlockStruct &blockStruct(StructDeclaration *sd, int rule, Loc loc,
+                                 bool root = false) {
+    auto key = std::make_tuple(sd, rule, root);
     auto it = blockStructs.find(key);
     if (it != blockStructs.end())
       return it->second;
@@ -591,10 +601,14 @@ public:
       for (unsigned k = 0; k < n; k++) {
         // A peeled array is indexed by its padded element, which the
         // backend reads as the array's element.
+        // Element 0 is the array's own address, which the backend reads as
+        // its first element.
         llvm::Value *p =
             arrayTy->isArrayTy()
                 ? builder.CreateInBoundsGEP(arrayTy, ptr,
                                             {builder.getInt32(0), builder.getInt32(k)})
+            : k == 0
+                ? ptr
                 : builder.CreateInBoundsGEP(
                       llvm::cast<llvm::ArrayType>(arrayTy->getStructElementType(0))
                           ->getElementType(),
@@ -608,7 +622,8 @@ public:
 
   /// The `T` value of a block variable: a uniform block's, a push-constant
   /// block's, or, on OpenGL, a block's fields as plain uniforms.
-  llvm::Value *loadBlock(llvm::IRBuilder<> &builder, const ShaderVariable &v) {
+  llvm::Value *loadBlock(llvm::IRBuilder<> &builder, const ShaderVariable &v,
+                         llvm::StringRef entry) {
     Type *t = v.blockType->toBasetype();
     StructDeclaration *sd = static_cast<TypeStruct *>(t)->sym;
     auto *aggr = getIrType(t)->isAggr();
@@ -627,11 +642,11 @@ public:
     }
     const bool push = v.kind == ShaderVariableKind::pushConstants;
     const int rule = push ? 1 : 0;
-    const BlockStruct &b = blockStruct(sd, rule, loc);
+    const BlockStruct &b = blockStruct(sd, rule, loc, /*root=*/true);
     llvm::Value *handle = nullptr;
     llvm::Type *handleTy = nullptr;
     if (push) {
-      handle = pushConstantVariable(b.type, v.name);
+      handle = pushConstantVariable(b.type, v.name, entry);
     } else {
       handleTy = llvm::TargetExtType::get(ctx, "spirv.VulkanBuffer", {b.type},
                                           {/*Uniform*/ 2, /*isWritable*/ 0});
@@ -662,14 +677,21 @@ public:
   }
 
   /// A push-constant block: a global in the `PushConstant` storage class.
-  llvm::GlobalVariable *pushConstantVariable(llvm::Type *ty, llvm::StringRef name) {
-    if (auto *existing = _ir->module.getGlobalVariable(name, true))
+  /// Each entry point's own, so two entry points' blocks of one name but
+  /// different types stay two variables; it carries its name in
+  /// `spirv.Name`.
+  llvm::GlobalVariable *pushConstantVariable(llvm::Type *ty, llvm::StringRef name,
+                                             llvm::StringRef entry) {
+    const std::string llvmName = (name + "." + entry + ".push").str();
+    if (auto *existing = _ir->module.getGlobalVariable(llvmName, true))
       return existing;
     auto *gv = new llvm::GlobalVariable(
         _ir->module, ty, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
-        nullptr, name, nullptr, llvm::GlobalValue::NotThreadLocal,
+        nullptr, llvmName, nullptr, llvm::GlobalValue::NotThreadLocal,
         /*PushConstant*/ 13, /*isExternallyInitialized=*/true);
     gv->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    gv->addMetadata("spirv.Name",
+                    *llvm::MDNode::get(ctx, {llvm::MDString::get(ctx, name)}));
     return gv;
   }
 
@@ -809,7 +831,7 @@ public:
       case ShaderVariableKind::uniformBlock:
       case ShaderVariableKind::pushConstants:
       case ShaderVariableKind::looseBlock:
-        value = wrapBlock(builder, dty, loadBlock(builder, v));
+        value = wrapBlock(builder, dty, loadBlock(builder, v, fd->ident->toChars()));
         break;
       case ShaderVariableKind::defaultUniform:
         value = defaults.member(*this, builder, *entry, v.ordinal);
