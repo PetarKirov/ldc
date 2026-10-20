@@ -114,6 +114,7 @@ struct Id
     static Identifier *udaShaderResources;
     static Identifier *udaShaderBinding;
     static Identifier *udaShaderRequires;
+    static Identifier *udaShaderVectorType;
     static Identifier *udaCompute;
     static Identifier *udaDynamicCompile;
     static Identifier *udaDynamicCompileConst;
