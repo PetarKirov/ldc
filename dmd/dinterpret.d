@@ -5136,6 +5136,18 @@ public:
         }
         if (e1 == pue.exp())
             e1 = pue.copy();
+        if (e1.op == EXP.int64 || e1.op == EXP.float64)
+        {
+            // A broadcast: the value CTFE holds is the elements themselves,
+            // so that writing one element writes this vector.
+            auto tv = e.type.toBasetype().isTypeVector();
+            auto elements = new Expressions(e.dim);
+            foreach (ref element; *elements)
+                element = copyLiteral(e1).copy();
+            auto ale = new ArrayLiteralExp(e.loc, tv.basetype, elements);
+            ale.ownedByCtfe = OwnedBy.ctfe;
+            e1 = ale;
+        }
         emplaceExp!(VectorExp)(pue, e.loc, e1, e.to);
         auto ve = pue.exp().isVectorExp();
         ve.type = e.type;
