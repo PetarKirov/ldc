@@ -78,12 +78,48 @@ float fieldRead()
 }
 static assert(fieldRead() == 7);
 
+// A copy of a vector is a vector of its own, even where the original
+// broadcasts its default value
+struct Z
+{
+    float4 v = 0;
+}
+
+float[2] copies()
+{
+    Z a;
+    a.v[0] = 5;
+    Z b = a;
+    b.v[0] = 1;
+    return [a.v[0], b.v[0]];
+}
+static assert(copies() == [5, 1]);
+
+float[2] fieldCopies()
+{
+    S a;
+    S b = a;
+    b.v[1] = 9;
+    return [a.v[1], b.v[1]];
+}
+static assert(fieldCopies() == [2, 9]);
+
 // A struct whose only field is a vector, the way a vector type wraps one
 struct V
 {
     float4 v = 0;
+    this(float a, float b, float c, float d)
+    {
+        v[0] = a;
+        v[1] = b;
+        v[2] = c;
+        v[3] = d;
+    }
+    this(float4 w) { v = w; }
     V opBinary(string op)(V rhs) const => V(mixin("v " ~ op ~ " rhs.v"));
 }
+
+static assert((V(1, 2, 3, 4) + V(1, 1, 1, 1)).v.array == [2, 3, 4, 5]);
 
 enum V k = V(make(1, 2, 3, 4)) + V(make(4, 3, 2, 1));
 static assert(k.v.array == [5, 5, 5, 5]);
