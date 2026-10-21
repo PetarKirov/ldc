@@ -234,6 +234,32 @@ UnionExp copyLiteral(Expression e)
         r.ownedByCtfe = OwnedBy.ctfe;
         return ue;
     }
+    if (auto ve = e.isVectorExp())
+    {
+        // A vector's elements are its own: copy them, as an array literal
+        // even where the vector broadcasts one value, so that writing an
+        // element of the copy writes the copy alone.
+        auto tv = ve.type.toBasetype().isTypeVector();
+        Expression elements = ve.e1;
+        if (auto ale = ve.e1.isArrayLiteralExp())
+            elements = copyLiteral(ale).copy();
+        else if (tv && (ve.e1.op == EXP.int64 || ve.e1.op == EXP.float64))
+        {
+            const dim = cast(size_t) tv.basetype.isTypeSArray().dim.toInteger();
+            auto broadcast = new Expressions(dim);
+            foreach (ref element; *broadcast)
+                element = copyLiteral(ve.e1).copy();
+            auto ale = new ArrayLiteralExp(ve.loc, tv.basetype, broadcast);
+            ale.ownedByCtfe = OwnedBy.ctfe;
+            elements = ale;
+        }
+        emplaceExp!(VectorExp)(&ue, ve.loc, elements, ve.to);
+        auto r = ue.exp().isVectorExp();
+        r.type = ve.type;
+        r.dim = ve.dim;
+        r.ownedByCtfe = OwnedBy.ctfe;
+        return ue;
+    }
     if (auto aae = e.isAssocArrayLiteralExp())
     {
         emplaceExp!(AssocArrayLiteralExp)(&ue, aae.loc, copyLiteralArray(aae.keys), copyLiteralArray(aae.values));
@@ -303,7 +329,6 @@ UnionExp copyLiteral(Expression e)
     case EXP.float64:
     case EXP.complex80:
     case EXP.void_:
-    case EXP.vector:
     case EXP.typeid_:
         // Simple value types
         // Keep e1 for DelegateExp and DotVarExp
