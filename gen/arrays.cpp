@@ -252,6 +252,22 @@ void DtoArrayAssign(Loc loc, DValue *lhs, DValue *rhs, EXP op,
     const bool needsPostblit = (op != EXP::blit && arrayNeedsPostblit(t) &&
                                 (!canSkipPostblit || t2->ty == TY::Tarray));
 
+    // Vulkan: a static array is one typed value, zeroed or copied whole,
+    // rather than bytes the host's layout would count (`DtoArrayInit`).
+    const bool vulkan = gIR->dcomputetarget &&
+                        gIR->dcomputetarget->target == DComputeTarget::ID::Vulkan;
+    auto *constLength = llvm::dyn_cast<llvm::ConstantInt>(lhsLength);
+    if (vulkan && !needsDestruction && !needsPostblit && constLength &&
+        t->ty == TY::Tsarray && (rhs->isNull() || t2->ty == TY::Tsarray)) {
+      auto *arrayTy = llvm::ArrayType::get(DtoMemType(elemType),
+                                           constLength->getZExtValue());
+      llvm::Value *value =
+          rhs->isNull() ? static_cast<llvm::Value *>(llvm::Constant::getNullValue(arrayTy))
+                        : gIR->ir->CreateLoad(arrayTy, rhsPtr);
+      gIR->ir->CreateStore(value, lhsPtr);
+      return;
+    }
+
     if (!needsDestruction && !needsPostblit) {
       // fast version
       const size_t elementSize = getTypeAllocSize(DtoMemType(elemType));
@@ -295,7 +311,21 @@ void DtoArrayAssign(Loc loc, DValue *lhs, DValue *rhs, EXP op,
     const bool needsPostblit =
         (op != EXP::blit && !canSkipPostblit && arrayNeedsPostblit(t));
 
-    if (!needsDestruction && !needsPostblit) {
+    // Vulkan: zeroing a static array, as its default initialisation does,
+    // is one store of a zero of the array's type; counting it out in units
+    // of the scalar would count by the host's layout.
+    const bool vulkanZero =
+        gIR->dcomputetarget &&
+        gIR->dcomputetarget->target == DComputeTarget::ID::Vulkan &&
+        t->ty == TY::Tsarray && llvm::isa<llvm::ConstantInt>(lhsLength) && [&] {
+          auto *c = isaConstant(DtoRVal(rhs));
+          return c && c->isNullValue();
+        }();
+    if (!needsDestruction && !needsPostblit && vulkanZero) {
+      auto *arrayTy = llvm::ArrayType::get(
+          DtoMemType(elemType), llvm::cast<llvm::ConstantInt>(lhsLength)->getZExtValue());
+      gIR->ir->CreateStore(llvm::Constant::getNullValue(arrayTy), lhsPtr);
+    } else if (!needsDestruction && !needsPostblit) {
       // fast version
       const size_t lhsElementSize =
           getTypeAllocSize(DtoMemType(lhs->type->nextOf()));
