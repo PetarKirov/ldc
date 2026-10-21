@@ -616,7 +616,12 @@ bool ldc_optimize_module(llvm::Module *M, llvm::TargetMachine *TM) {
       llvm::FunctionAnalysisManager FAM;
       llvm::CGSCCAnalysisManager CGAM;
       llvm::ModuleAnalysisManager MAM;
-      llvm::PassBuilder PB(TM);
+      // The standard instrumentation, as for any module: `-print-after-all`,
+      // `-opt-bisect-limit` and kin work on a shader too.
+      llvm::PassInstrumentationCallbacks PIC;
+      llvm::StandardInstrumentations SI(M->getContext(), /*DebugLogging=*/false);
+      SI.registerCallbacks(PIC, &MAM);
+      llvm::PassBuilder PB(TM, llvm::PipelineTuningOptions(), std::nullopt, &PIC);
       PB.registerModuleAnalyses(MAM);
       PB.registerCGSCCAnalyses(CGAM);
       PB.registerFunctionAnalyses(FAM);
@@ -625,10 +630,18 @@ bool ldc_optimize_module(llvm::Module *M, llvm::TargetMachine *TM) {
 
       llvm::ModulePassManager MPM;
       if (optLevel() >= 1) {
-        MPM = PB.buildPerModuleDefaultPipeline(
+        // Every helper folds into its entry point (`addMetadata`), and does so
+        // first: the pipeline's first InstCombine runs before its inliner,
+        // and a local that a call still takes the address of cannot be
+        // promoted yet, so InstCombine would merge the loads of two such
+        // locals across a branch -- a `?:` between two structs -- into a load
+        // through a phi of their addresses, which logical SPIR-V does not
+        // have.
+        MPM.addPass(llvm::AlwaysInlinerPass());
+        MPM.addPass(PB.buildPerModuleDefaultPipeline(
             optLevel() >= 3 ? llvm::OptimizationLevel::O3
             : optLevel() == 2 ? llvm::OptimizationLevel::O2
-                              : llvm::OptimizationLevel::O1);
+                              : llvm::OptimizationLevel::O1));
       } else {
         MPM.addPass(llvm::AlwaysInlinerPass());
         llvm::FunctionPassManager FPM;
