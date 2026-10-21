@@ -24,6 +24,7 @@
 #include "dmd/template.h"
 #include "gen/abi/abi.h"
 #include "gen/arrays.h"
+#include "gen/dcompute/target.h"
 #include "gen/binops.h"
 #include "gen/classes.h"
 #include "gen/complex.h"
@@ -66,6 +67,11 @@ bool walkPostorder(Expression *e, StoppableVisitor *v);
 ////////////////////////////////////////////////////////////////////////////////
 
 static LLValue *write_zeroes(LLValue *mem, unsigned start, unsigned end) {
+  // A logical shader's value has no padding bytes to clear, and the host's
+  // layout, which placed this padding, need not be the device's.
+  if (gIR->dcomputetarget &&
+      gIR->dcomputetarget->target == DComputeTarget::ID::Vulkan)
+    return mem;
   LLType *i8 = LLType::getInt8Ty(gIR->context());
   LLValue *gep = DtoGEP1(i8, mem, start, ".padding");
   DtoMemSetZero(i8, gep, DtoConstSize_t(end - start));

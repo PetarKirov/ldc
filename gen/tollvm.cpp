@@ -9,6 +9,7 @@
 
 #include "gen/tollvm.h"
 #include "gen/dcompute/druntime.h"
+#include "gen/dcompute/target.h"
 
 #include "dmd/aggregate.h"
 #include "dmd/declaration.h"
@@ -444,6 +445,16 @@ void DtoMemSetZero(LLType *type, LLValue *dst, LLValue *nbytes, unsigned align) 
 }
 
 void DtoMemSetZero(LLType *type, LLValue *dst, unsigned align) {
+  // Logical SPIR-V zeroes a value by storing a zero of its type: it has no
+  // bytes to set, and the host's layout, which `getTypeStoreSize` reads, need
+  // not size the type as the device does (a three-wide vector).
+  if (gIR && gIR->dcomputetarget &&
+      gIR->dcomputetarget->target == DComputeTarget::ID::Vulkan &&
+      !type->isIntegerTy(8)) {
+    gIR->ir->CreateAlignedStore(llvm::Constant::getNullValue(type), dst,
+                                llvm::MaybeAlign(align));
+    return;
+  }
   uint64_t n = getTypeStoreSize(type);
   DtoMemSetZero(type, dst, DtoConstSize_t(n), align);
 }
@@ -459,6 +470,17 @@ void DtoMemCpy(LLValue *dst, LLValue *src, LLValue *nbytes, unsigned dstAlign,
 
 void DtoMemCpy(LLType *type, LLValue *dst, LLValue *src, bool withPadding,
                unsigned dstAlign, unsigned srcAlign) {
+  // Logical SPIR-V has no bytes to copy, only typed values: a struct or array
+  // is copied as one load and one store of its type, which the optimiser
+  // keeps typed, where it would turn a small memcpy into integers of the
+  // copy's width -- 128 bits for a four-float vector -- that no shader has.
+  if (gIR && gIR->dcomputetarget &&
+      gIR->dcomputetarget->target == DComputeTarget::ID::Vulkan &&
+      (type->isStructTy() || type->isArrayTy())) {
+    auto *value = gIR->ir->CreateAlignedLoad(type, src, llvm::MaybeAlign(srcAlign));
+    gIR->ir->CreateAlignedStore(value, dst, llvm::MaybeAlign(dstAlign));
+    return;
+  }
   uint64_t n =
       withPadding ? getTypeAllocSize(type) : getTypeStoreSize(type);
   DtoMemCpy(dst, src, DtoConstSize_t(n), dstAlign, srcAlign);
