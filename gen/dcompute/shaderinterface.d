@@ -1336,10 +1336,13 @@ void checkWorkgroupUse(const(ShaderEntry)*[] emitted)
 /// A write through a read-only storage buffer fails, naming the parameter
 /// (`SHR9`): an assignment (plain or compound), or an increment, whose
 /// left-hand side roots at a variable of `StorageBuffer!(T, Access.read)`.
-/// Whether `t` holds a vector of three components, at any depth: `std430`
-/// aligns it to 16 bytes where D's own layout does not, so a body reading
-/// a storage block of it through D's layout would address other bytes
-/// than the block declares.
+/// Whether `t` holds a vector of three components, at any depth. The
+/// SPIR-V backend's translation of access chains into a storage block
+/// holding one — through the peeled array a strided element requires,
+/// and through the base pointer every access shares — crashes or emits
+/// an invalid chain, so the frontend refuses the type instead. (The
+/// vocabulary's device-layout vectors are 16 bytes; this is not a
+/// layout disagreement.)
 bool containsVec3(Type t)
 {
     t = shaderType(t);
@@ -1677,7 +1680,7 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
             }
             else if (containsVec3(field.type))
             {
-                error(field.loc, "%s storage buffer field `%s` of `%s` holds a vector of three components, whose `std430` layout the body's own layout does not reproduce; a `StorageBuffer!T` holds scalars, vectors of two or four, and arrays and structs of those",
+                error(field.loc, "%s storage buffer field `%s` of `%s` holds a vector of three components, which a storage block cannot yet translate; a `StorageBuffer!T` holds scalars, vectors of two or four, and arrays and structs of those",
                     attr, field.ident.toChars(), name);
                 fatal();
             }
