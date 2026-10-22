@@ -13,6 +13,8 @@
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage,storageBuffers,uniformBlocks -I%t %t/readonly.d 2>&1 | FileCheck %t/readonly.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage -I%t %t/nonvoid.d 2>&1 | FileCheck %t/nonvoid.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage -I%t %t/input.d 2>&1 | FileCheck %t/input.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage -I%t %t/product.d 2>&1 | FileCheck %t/product.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage -I%t %t/noprofile.d 2>&1 | FileCheck %t/noprofile.d
 
 //--- kernel.d
 @compute(CompileFor.deviceOnly) module kernmod;
@@ -58,3 +60,15 @@ import ldc.dcompute;
 import ldc.dcompute;
 // CHECK: Error: `@computeShader` parameter `x` is an `@input`; a compute entry point's parameters are resources or built-ins
 @_profiles("vulkan1.3") @computeShader(4, 1, 1) void fill(@input int x) {}
+
+//--- product.d
+@compute(CompileFor.deviceOnly) module product;
+import ldc.dcompute;
+// CHECK: Error: `@computeShader` entry point `fill` has workgroup size (16, 16, 1)
+@_profiles("vulkan1.3") @computeShader(16, 16, 1) void fill() {}
+
+//--- noprofile.d
+@compute(CompileFor.deviceOnly) module noprofile;
+import ldc.dcompute;
+// CHECK: Error: `@computeShader` entry point `fill` declares no profiles, and no profile grants the compute stage by default
+@computeShader(4, 1, 1) void fill() {}
