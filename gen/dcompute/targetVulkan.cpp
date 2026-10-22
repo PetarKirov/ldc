@@ -894,7 +894,7 @@ public:
         const BlockStruct &b = blockStruct(bsym, /*std430*/ 1, v.decl->loc, /*root=*/true);
         llvm::Type *handleTy = llvm::TargetExtType::get(
             ctx, "spirv.VulkanBuffer", {b.type},
-            {/*StorageBuffer*/ 12, v.writable ? 1 : 0});
+            {/*StorageBuffer*/ 12u, v.writable ? 1u : 0u});
         llvm::Value *handle = buildResourceHandle(builder, handleTy, v.ordinal, v.name);
         auto *p11 = llvm::PointerType::get(ctx, 11);
         llvm::Value *base = buildIntrinsicCall(builder, "base",
