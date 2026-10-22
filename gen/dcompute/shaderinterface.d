@@ -1336,6 +1336,23 @@ void checkWorkgroupUse(const(ShaderEntry)*[] emitted)
 /// A write through a read-only storage buffer fails, naming the parameter
 /// (`SHR9`): an assignment (plain or compound), or an increment, whose
 /// left-hand side roots at a variable of `StorageBuffer!(T, Access.read)`.
+/// Whether `t` holds a vector of three components, at any depth: `std430`
+/// aligns it to 16 bytes where D's own layout does not, so a body reading
+/// a storage block of it through D's layout would address other bytes
+/// than the block declares.
+bool containsVec3(Type t)
+{
+    t = shaderType(t);
+    if (auto tv = t.isTypeVector())
+        return (cast(TypeSArray) tv.basetype).dim.toInteger() == 3;
+    if (t.ty == TY.Tsarray)
+        return containsVec3(t.nextOf());
+    if (auto ts = t.isTypeStruct())
+        foreach (field; ts.sym.fields)
+            if (containsVec3(field.type))
+                return true;
+    return false;
+}
 void checkStorageWrites(const(ShaderEntry)*[] emitted)
 {
     import dmd.visitor : SemanticTimeTransitiveVisitor;
@@ -1344,6 +1361,7 @@ void checkStorageWrites(const(ShaderEntry)*[] emitted)
     {
         alias visit = SemanticTimeTransitiveVisitor.visit;
         bool[void*] reported;
+
 
         void check(Expression lhs, Loc loc)
         {
@@ -1654,6 +1672,12 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
             if (field.type.toBasetype().ty == TY.Tarray)
             {
                 error(field.loc, "%s storage buffer field `%s` of `%s` is a runtime-sized array; a `StorageBuffer!T` is fixed-size",
+                    attr, field.ident.toChars(), name);
+                fatal();
+            }
+            else if (containsVec3(field.type))
+            {
+                error(field.loc, "%s storage buffer field `%s` of `%s` holds a vector of three components, whose `std430` layout the body's own layout does not reproduce; a `StorageBuffer!T` holds scalars, vectors of two or four, and arrays and structs of those",
                     attr, field.ident.toChars(), name);
                 fatal();
             }

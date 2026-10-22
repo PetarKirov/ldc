@@ -15,6 +15,7 @@
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage -I%t %t/input.d 2>&1 | FileCheck %t/input.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage -I%t %t/product.d 2>&1 | FileCheck %t/product.d
 // RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage -I%t %t/noprofile.d 2>&1 | FileCheck %t/noprofile.d
+// RUN: not %ldc -c -m64 -mdcompute-targets=vulkan-130 -mdcompute-profile=vulkan1.3 -capabilities=shader:shader,computeStage,storageBuffers,uniformBlocks -I%t %t/vec3.d 2>&1 | FileCheck %t/vec3.d
 
 //--- kernel.d
 @compute(CompileFor.deviceOnly) module kernmod;
@@ -72,3 +73,10 @@ import ldc.dcompute;
 import ldc.dcompute;
 // CHECK: Error: `@computeShader` entry point `fill` declares no profiles, and no profile grants the compute stage by default
 @computeShader(4, 1, 1) void fill() {}
+
+//--- vec3.d
+@compute(CompileFor.deviceOnly) module vec3mod;
+import ldc.dcompute;
+struct P { __vector(float[3])[2] pts; float w; }
+// CHECK: Error: `@computeShader` storage buffer field `pts` of `o` holds a vector of three components
+@_profiles("vulkan1.3") @computeShader(4, 1, 1) void fill(StorageBuffer!P o) { (*o).w = 1.0f; }
