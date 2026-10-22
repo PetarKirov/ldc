@@ -95,6 +95,19 @@ struct DComputeSemanticAnalyser : public StoppableVisitor {
     stop = true;
   }
 
+  // The two module-scope forms a shader may declare (`SHM7` in the shader
+  // library's terms): an `immutable` constant table and a `Workgroup!T`
+  // variable. Anything else at module scope stays banned below.
+  bool inTableInitializer = false;
+
+  static bool isWorkgroupVar(VarDeclaration *decl) {
+    Type *t = decl->type ? decl->type->toBasetype() : nullptr;
+    if (!t || t->ty != TY::Tstruct)
+      return false;
+    StructDeclaration *sd = static_cast<TypeStruct *>(t)->sym;
+    return sd->ident == Id::dcWorkgroup && isFromLDC_DCompute(sd);
+  }
+
   void visit(VarDeclaration *decl) override {
     // A manifest constant (`enum`) exists only at compile time: its
     // initializer, a profile's name for one, is never device data.
@@ -104,6 +117,14 @@ struct DComputeSemanticAnalyser : public StoppableVisitor {
     }
     // Don't print multiple errors for 'synchronized'. see visit(CallExp*)
     if (decl->isDataseg()) {
+      if (decl->storage_class & STCimmutable) {
+        // A constant table: its initializer may be an array literal, the
+        // one place one is allowed.
+        inTableInitializer = true;
+        return;
+      }
+      if (isWorkgroupVar(decl))
+        return;
       if (strncmp(decl->toChars(), "__critsec", 9) &&
         strncmp(decl->toChars(), "typeid", 6)) {
         error(decl->loc, "global variables not allowed in `@compute` code");
@@ -112,6 +133,7 @@ struct DComputeSemanticAnalyser : public StoppableVisitor {
       stop = true;
       return;
     }
+    inTableInitializer = false;
 
     if (!decl->type)
       return;
@@ -136,6 +158,8 @@ struct DComputeSemanticAnalyser : public StoppableVisitor {
   // Nogc enforcement.
   // No need to check AssocArrayLiteral because AA's are banned anyway
   void visit(ArrayLiteralExp *e) override {
+    if (inTableInitializer)
+      return;
     if (e->type->ty != TY::Tarray || !e->elements || !e->elements->length)
       return;
     error(e->loc, "array literal in `@compute` code not allowed");
@@ -267,6 +291,7 @@ struct DComputeSemanticAnalyser : public StoppableVisitor {
   }
 
   void visit(FuncDeclaration *fd) override {
+    inTableInitializer = false;
     if (getKernelAttr(fd) && fd->vthis) {
       error(fd->loc, "`@kernel` functions must not require `this`");
       stop = true;

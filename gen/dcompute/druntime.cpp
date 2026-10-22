@@ -58,6 +58,13 @@ llvm::Type *toDcomputeOpaqueHandleType(StructDeclaration *sd) {
   }
   if (sd->ident == Id::dcSampler)
     return llvm::TargetExtType::get(ctx, "spirv.Sampler");
+  if (sd->ident == Id::dcStorageImage2D) {
+    // OpTypeImage %float 2D depth=unknown arrayed=0 ms=0 sampled=2 (storage)
+    // Rgba32f (1)
+    return llvm::TargetExtType::get(ctx, "spirv.Image",
+                                    {llvm::Type::getFloatTy(ctx)},
+                                    {1, 2, 0, 0, 2, 1});
+  }
   return nullptr;
 }
 

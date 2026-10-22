@@ -30,7 +30,7 @@ public:
 
             // Map from nominal DCompute address space to NVPTX address space.
             // see $LLVM_ROOT/docs/docs/NVPTXUsage.rst section Address Spaces
-            {{5, 1, 3, 4, 0}}) {
+            {{5, 1, 3, 4, 0, 1}}) {
 
     const bool is64 = global.params.targetTriple->isArch64Bit();
     auto tripleString = is64 ? "nvptx64-nvidia-cuda" : "nvptx-nvidia-cuda";

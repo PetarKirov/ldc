@@ -22,7 +22,7 @@ class StructDeclaration;
 class Type;
 class VarDeclaration;
 
-enum class ShaderStage : int { fragment = 0, vertex = 1 };
+enum class ShaderStage : int { fragment = 0, vertex = 1, compute = 2 };
 
 enum class ShaderVariableKind : int {
   input,         // an `@input` parameter: location `ordinal`
@@ -35,7 +35,9 @@ enum class ShaderVariableKind : int {
   pushConstants, // a `PushConstants!T` on Vulkan: std430
   defaultUniform, // a `@uniform` on Vulkan: member `ordinal` of the default block
   looseBlock,    // a block on OpenGL: one uniform per field of its `T`
-  sampler        // a `SamplerState` parameter: binding `ordinal`
+  sampler,       // a `SamplerState` parameter: binding `ordinal`
+  storageBuffer, // a `StorageBuffer!T` parameter: binding `ordinal`, std430
+  storageImage   // a `StorageImage2D` parameter: binding `ordinal`
 };
 
 struct ShaderVariable {
@@ -54,6 +56,8 @@ struct ShaderVariable {
   /// parameter, `depth` of them.
   int path[8];
   int depth;
+  /// For a storage buffer: whether it may be written through.
+  int writable;
 };
 
 struct ShaderEntry {
@@ -69,6 +73,8 @@ struct ShaderEntry {
   int defaultBlockBinding;
   const char *defaultBlockName;
   const char *defaultBlockTypeName;
+  /// A compute entry point's workgroup size; zero for other stages.
+  int workgroupSize[3];
 };
 
 /// The description of `fd` if it is a shader entry point this compilation

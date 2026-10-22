@@ -715,6 +715,23 @@ StructLiteralExp *getShaderAttr(Dsymbol *sym) {
   return sle;
 }
 
+/// Returns whether `sym` has the `@ldc.dcompute._computeShader()` UDA applied.
+StructLiteralExp *getComputeShaderAttr(Dsymbol *sym) {
+  auto sle = getMagicAttribute(sym, Id::udaComputeShader, Id::dcompute);
+  if (!sle)
+    return nullptr;
+
+  checkStructElems(sle, {dmd::sarrayOf(Type::tsize_t, 3)});
+
+  if (!sym->isFuncDeclaration() ||
+      hasComputeAttr(sym->getModule()) == DComputeCompileFor::hostOnly) {
+    error(sym->loc, "`@ldc.dcompute.computeShader` can only be applied to functions"
+                    " in modules marked `@ldc.dcompute.compute`");
+  }
+
+  return sle;
+}
+
 /// Check whether `fd` has the `@ldc.attributes.noSplitStack` UDA applied.
 bool hasNoSplitStackUDA(FuncDeclaration *fd) {
   auto sle = getMagicAttribute(fd, Id::udaNoSplitStack, Id::attributes);

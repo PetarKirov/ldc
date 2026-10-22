@@ -59,6 +59,7 @@ enum ShaderStage : int
 {
     fragment = 0,
     vertex = 1,
+    compute = 2,
 }
 
 /// What an interface variable is.
@@ -75,6 +76,8 @@ enum ShaderVariableKind : int
     defaultUniform, /// a `@uniform` on Vulkan: member `ordinal` of the entry's default block
     looseBlock,    /// a block on OpenGL: one uniform per field of its `T`
     sampler,       /// a `SamplerState` parameter: binding `ordinal`
+    storageBuffer, /// a `StorageBuffer!T` parameter: binding `ordinal`, std430
+    storageImage,  /// a `StorageImage2D` parameter: binding `ordinal`
 }
 
 /// One variable of an entry point's interface.
@@ -95,6 +98,8 @@ struct ShaderVariable
     /// parameter, `depth` of them.
     int[8] path;
     int depth;
+    /// For a storage buffer: whether it may be written through.
+    int writable;
 }
 
 /// A shader entry point emitted by this compilation, and its interface.
@@ -113,6 +118,8 @@ struct ShaderEntry
     int defaultBlockBinding = -1;
     const(char)* defaultBlockName;
     const(char)* defaultBlockTypeName;
+    /// A compute entry point's workgroup size; zero for other stages.
+    int[3] workgroupSize;
 }
 
 /// For the code generator: the size, under `rule` (0 std140, 1 std430), of a
@@ -172,6 +179,10 @@ void analyseShaderEntries(ref Modules modules)
             }
         });
     checkRequirements(emitted);
+    checkKernels(modules);
+    validateModuleVariables(modules);
+    checkStorageWrites(emitted);
+    checkWorkgroupUse(emitted);
     if (dcomputeReportInt64())
         reportInt64(entries.keys);
 }
@@ -194,7 +205,8 @@ bool writeDComputeManifest(ref Modules modules)
     foreach (m; modules[])
         foreachEntry(m.members, (FuncDeclaration fd, ShaderStage stage) {
             items ~= Item(fd.ident.toString(),
-                stage == ShaderStage.vertex ? "vertex" : "fragment",
+                stage == ShaderStage.vertex ? "vertex" : stage == ShaderStage.compute
+                    ? "compute" : "fragment",
                 fd.getModule().toPrettyChars().toDString(), entryProfiles(fd, stage));
         });
     if (global.errors)
@@ -345,6 +357,29 @@ bool shaderStageOf(FuncDeclaration fd, out ShaderStage stage)
     return true;
 }
 
+/// The workgroup size of `fd`'s `@computeShader(x, y, z)`, or false if it
+/// has none. `size` is filled when it has one.
+bool computeShaderOf(FuncDeclaration fd, out long[3] size)
+{
+    auto sle = dcomputeAttributeLiteral(fd, Id.udaComputeShader);
+    if (!sle)
+        return false;
+    if (!isComputeModule(fd.getModule()))
+    {
+        error(fd.loc, "`@ldc.dcompute.computeShader` can only be applied to functions in modules marked `@ldc.dcompute.compute`");
+        return false;
+    }
+    auto bounds = (*sle.elements)[0].isArrayLiteralExp();
+    if (!bounds || !bounds.elements || bounds.elements.length != 3)
+    {
+        error(fd.loc, "unexpected `@computeShader` bounds; does druntime not match compiler version?");
+        fatal();
+    }
+    foreach (i; 0 .. 3)
+        size[i] = cast(long) (*bounds.elements)[i].toInteger();
+    return true;
+}
+
 bool hasMarker(Dsymbol s, Identifier id) => dcomputeAttribute(s, id) !is null;
 
 /// The `Builtin` a `@builtin` marks `s` as, or -1.
@@ -378,8 +413,23 @@ void foreachEntry(Dsymbols* members, scope void delegate(FuncDeclaration, Shader
             continue;
         }
         auto fd = s.isFuncDeclaration();
+        if (!fd)
+            continue;
+        long[3] size;
+        if (computeShaderOf(fd, size))
+        {
+            ShaderStage stage;
+            if (shaderStageOf(fd, stage))
+            {
+                error(fd.loc, "function `%s` is marked both `@computeShader` and a graphics stage; it must be one",
+                    fd.ident.toChars());
+                fatal();
+            }
+            dg(fd, ShaderStage.compute);
+            continue;
+        }
         ShaderStage stage;
-        if (fd && shaderStageOf(fd, stage))
+        if (shaderStageOf(fd, stage))
             dg(fd, stage);
     }
 }
@@ -424,6 +474,12 @@ const(char)[][] entryProfiles(FuncDeclaration fd, ShaderStage stage)
         return splitNames(module_);
     if (stage == ShaderStage.fragment)
         return ["gl330", "gles100"];
+    if (stage == ShaderStage.compute)
+    {
+        error(fd.loc, "`@computeShader` entry point `%s` declares no profiles, and no profile grants the compute stage by default; mark it, or its module, `@profiles(...)`",
+            fd.ident.toChars());
+        fatal();
+    }
     error(fd.loc, "`@vertex` entry point `%s` declares no profiles, and no profile is the default for the vertex stage; mark it, or its module, `@profiles(...)`",
         fd.ident.toChars());
     fatal();
@@ -568,6 +624,7 @@ enum BuiltinType
     int_,
     float4,
     bool_,
+    int3,
 }
 
 immutable BuiltinVariable[] builtins = [
@@ -576,9 +633,14 @@ immutable BuiltinVariable[] builtins = [
     BuiltinVariable("position", ShaderStage.vertex, true, 0, BuiltinType.float4),
     BuiltinVariable("fragCoord", ShaderStage.fragment, false, 15, BuiltinType.float4),
     BuiltinVariable("frontFacing", ShaderStage.fragment, false, 17, BuiltinType.bool_),
+    BuiltinVariable("globalInvocationId", ShaderStage.compute, false, 28, BuiltinType.int3),
+    BuiltinVariable("localInvocationId", ShaderStage.compute, false, 27, BuiltinType.int3),
+    BuiltinVariable("workgroupId", ShaderStage.compute, false, 26, BuiltinType.int3),
+    BuiltinVariable("localInvocationIndex", ShaderStage.compute, false, 29, BuiltinType.int_),
+    BuiltinVariable("numWorkgroups", ShaderStage.compute, false, 24, BuiltinType.int3),
 ];
 
-immutable string[] builtinTypeNames = ["int", "__vector(float[4])", "bool"];
+immutable string[] builtinTypeNames = ["int", "__vector(float[4])", "bool", "__vector(int[3])"];
 
 bool hasBuiltinType(Type t, BuiltinType type)
 {
@@ -590,10 +652,16 @@ bool hasBuiltinType(Type t, BuiltinType type)
         return isFloat4(t);
     case BuiltinType.bool_:
         return t.ty == TY.Tbool;
+    case BuiltinType.int3:
+        t = shaderType(t);
+        auto tv = t.isTypeVector();
+        return tv && tv.elementType().ty == TY.Tint32
+            && (cast(TypeSArray) tv.basetype).dim.toInteger() == 3;
     }
 }
 
-const(char)* stageAttr(ShaderStage s) => s == ShaderStage.vertex ? "`@vertex`" : "`@fragment`";
+const(char)* stageAttr(ShaderStage s) => s == ShaderStage.vertex ? "`@vertex`"
+    : s == ShaderStage.compute ? "`@computeShader`" : "`@fragment`";
 
 bool isFloat4(Type t)
 {
@@ -619,7 +687,8 @@ immutable(BuiltinVariable)* checkBuiltin(VarDeclaration vd, int b, const(char)* 
     {
         error(vd.loc, "built-in `%s` of %s %s `%s` is a %s-stage built-in", v.name.ptr,
             stageAttr(stage), what, vd.ident.toChars(),
-            v.stage == ShaderStage.vertex ? "vertex".ptr : "fragment".ptr);
+            v.stage == ShaderStage.vertex ? "vertex".ptr
+                : v.stage == ShaderStage.compute ? "compute".ptr : "fragment".ptr);
         fatal();
     }
     if (v.output != output)
@@ -882,7 +951,8 @@ void recordInterfaceUse(ShaderStage stage, VarDeclaration vd, const(char)* entry
     // One variable per stage, direction and name (`SHF2`): a vertex output and
     // the fragment input it feeds share their name, and so may a vertex
     // stage's input and output.
-    const key = (stage == ShaderStage.vertex ? "vertex " : "")
+    const key = (stage == ShaderStage.vertex ? "vertex " : stage == ShaderStage.compute
+            ? "compute " : "")
         ~ (strcmp(kind, "output") == 0 ? "out " : "in ") ~ vd.ident.toString().idup;
     // `in float` and `float` are one interface type, and so are a `@vectorType`
     // struct and its vector; two structs of one name from two modules are not.
@@ -908,6 +978,8 @@ void recordInterfaceUse(ShaderStage stage, VarDeclaration vd, const(char)* entry
     if (first.ordinal != ordinal)
     {
         const what = strcmp(kind, "image") == 0 || strcmp(kind, "uniform block") == 0
+            || strcmp(kind, "storage buffer") == 0 || strcmp(kind, "storage image") == 0
+            || strcmp(kind, "sampler") == 0
             ? "binding" : "location";
         error(vd.loc, "shader %s `%s` is at %s %d in `%s` but %s %d in `%s`; an interface name is one variable across the module, so every entry point must give it the same %s",
             kind, name, what.ptr, ordinal, entry, what.ptr, first.ordinal, first.entry, what.ptr);
@@ -1110,7 +1182,217 @@ bool entryIsGranted(const(char)[] capability, ShaderStage stage)
         return false;
     if (capability == "fragmentStage" && stage != ShaderStage.fragment)
         return false;
+    if (capability == "computeStage" && stage != ShaderStage.compute)
+        return false;
     return (capability in shaderGrants().names) !is null;
+}
+
+// ---- kernels, module-scope variables, writes --------------------------------
+
+/// Every function declared in `members`, recursing into attribute blocks.
+void foreachFunction(Dsymbols* members, scope void delegate(FuncDeclaration) dg)
+{
+    import dmd.dsymbolsem : include;
+
+    if (!members)
+        return;
+    foreach (s; *members)
+    {
+        if (auto ad = s.isAttribDeclaration())
+        {
+            foreachFunction(include(ad, null), dg);
+            continue;
+        }
+        if (auto fd = s.isFuncDeclaration())
+            dg(fd);
+    }
+}
+
+/// A `@kernel` packs its arguments into buffer device addresses. A profile
+/// that denies `bufferDeviceAddress` refuses one, naming the function and
+/// the capability, rather than emitting it (`SHF10`).
+void checkKernels(ref Modules modules)
+{
+    if (!shaderGrants().given || "bufferDeviceAddress" in shaderGrants())
+        return;
+    foreach (m; modules[])
+        foreachFunction(m.members, (FuncDeclaration fd) {
+            if (!dcomputeAttributeLiteral(fd, Id.udaKernel))
+                return;
+            error(fd.loc, "`@kernel` function `%s` packs its arguments into buffer device addresses, which the profile `%s` does not grant (`bufferDeviceAddress`); use `@computeShader` for a compute entry point with descriptor resources",
+                fd.ident.toChars(), dcomputeActiveProfile());
+            fatal();
+        });
+}
+
+__gshared VarDeclaration[] workgroupVariables;
+
+/// The `Workgroup!T` variables declared at module scope, checked (`SHM7`):
+/// `T` is an `int` or `float`, a vector of either, or a static array of one
+/// of those, and the variable is at most 16384 bytes.
+void validateModuleVariables(ref Modules modules)
+{
+    foreach (m; modules[])
+    {
+        if (!isComputeModule(m))
+            continue;
+        scanModuleVariables(m.members);
+    }
+}
+
+void scanModuleVariables(Dsymbols* members)
+{
+    import dmd.dsymbolsem : include;
+
+    if (!members)
+        return;
+    foreach (s; *members)
+    {
+        if (auto ad = s.isAttribDeclaration())
+        {
+            scanModuleVariables(include(ad, null));
+            continue;
+        }
+        auto vd = s.isVarDeclaration();
+        if (!vd || !vd.type)
+            continue;
+        Type element;
+        if (!workgroupOf(vd.type, element))
+            continue;
+        workgroupVariables ~= vd;
+        if (!isWorkgroupElement(element))
+        {
+            error(vd.loc, "workgroup variable `%s` holds `%s`; workgroup memory holds an `int` or `float`, a vector of either, or a static array of one of those",
+                vd.ident.toChars(), element.toChars());
+            fatal();
+        }
+        const bytes = sizeOf(element, Rule.std430);
+        if (bytes > 16384)
+        {
+            error(vd.loc, "workgroup variable `%s` is %u bytes, over the 16384 every Vulkan implementation offers for workgroup memory",
+                vd.ident.toChars(), cast(uint) bytes);
+            fatal();
+        }
+    }
+}
+
+bool isWorkgroupElement(Type t)
+{
+    t = shaderType(t);
+    if (t.ty == TY.Tint32 || t.ty == TY.Tfloat32)
+        return true;
+    if (auto tv = t.isTypeVector())
+    {
+        const et = tv.elementType().ty;
+        return et == TY.Tint32 || et == TY.Tfloat32;
+    }
+    if (t.ty == TY.Tsarray)
+        return isWorkgroupElement(t.nextOf());
+    return false;
+}
+
+/// A graphics entry point that references workgroup memory fails, naming
+/// the entry point and the variable (`SHM7`).
+void checkWorkgroupUse(const(ShaderEntry)*[] emitted)
+{
+    import dmd.visitor : SemanticTimeTransitiveVisitor;
+
+    if (!workgroupVariables.length)
+        return;
+    extern (C++) final class Find : SemanticTimeTransitiveVisitor
+    {
+        alias visit = SemanticTimeTransitiveVisitor.visit;
+        VarDeclaration found;
+
+        override void visit(VarExp e)
+        {
+            foreach (v; workgroupVariables)
+                if (e.var == v)
+                    found = v;
+            super.visit(e);
+        }
+    }
+
+    foreach (e; emitted)
+    {
+        if (e.stage == ShaderStage.compute)
+            continue;
+        foreach (r; reachableFrom(cast() e.fd))
+        {
+            if (!r.fd.fbody)
+                continue;
+            auto find = new Find();
+            r.fd.fbody.accept(find);
+            if (find.found)
+            {
+                error(e.fd.loc, "%s entry point `%s` references workgroup variable `%s`; workgroup memory belongs to the compute stage",
+                    stageAttr(e.stage), e.fd.ident.toChars(), find.found.ident.toChars());
+                fatal();
+            }
+        }
+    }
+}
+
+/// A write through a read-only storage buffer fails, naming the parameter
+/// (`SHR9`): an assignment (plain or compound), or an increment, whose
+/// left-hand side roots at a variable of `StorageBuffer!(T, Access.read)`.
+void checkStorageWrites(const(ShaderEntry)*[] emitted)
+{
+    import dmd.visitor : SemanticTimeTransitiveVisitor;
+
+    extern (C++) final class Writes : SemanticTimeTransitiveVisitor
+    {
+        alias visit = SemanticTimeTransitiveVisitor.visit;
+        bool[void*] reported;
+
+        void check(Expression lhs, Loc loc)
+        {
+            Expression e = lhs;
+            for (;;)
+            {
+                if (auto dv = e.isDotVarExp())
+                    e = dv.e1;
+                else if (auto ix = e.isIndexExp())
+                    e = ix.e1;
+                else if (auto ce = e.isCastExp())
+                    e = ce.e1;
+                else if (auto pe = e.isPtrExp())
+                    e = pe.e1;
+                else
+                    break;
+            }
+            auto ve = e.isVarExp();
+            if (!ve || !ve.var || !ve.var.type)
+                return;
+            Type blockType;
+            int writable;
+            if (!storageBufferOf(ve.var.type, blockType, writable) || writable)
+                return;
+            if (cast(void*) ve.var in reported)
+                return;
+            reported[cast(void*) ve.var] = true;
+            error(loc, "cannot write through read-only storage buffer parameter `%s` (`Access.read`)",
+                ve.var.ident.toChars());
+            fatal();
+        }
+
+        override void visit(AssignExp e)
+        {
+            check(e.e1, e.loc);
+            super.visit(e);
+        }
+
+        override void visit(BinAssignExp e)
+        {
+            check(e.e1, e.loc);
+            super.visit(e);
+        }
+    }
+
+    foreach (e; emitted)
+        foreach (r; reachableFrom(cast() e.fd))
+            if (r.fd.fbody)
+                r.fd.fbody.accept(new Writes());
 }
 
 /// The capabilities a `@requires` on `fd` names.
@@ -1166,7 +1448,8 @@ void reportRequirement(const(ShaderEntry)* e, Reached[] walk, size_t target,
 {
     auto fd = walk[target].fd;
     const profile = dcomputeActiveProfile().toDString();
-    const otherStage = (capability == "vertexStage" || capability == "fragmentStage")
+    const otherStage = (capability == "vertexStage" || capability == "fragmentStage"
+            || capability == "computeStage")
         && capability in shaderGrants().names;
     OutBuffer why;
     if (otherStage)
@@ -1204,6 +1487,8 @@ enum ItemKind
     sampler,
     uniformBlock,
     pushConstants,
+    storageBuffer,
+    storageImage,
 }
 
 /// One parameter of an entry point, or a field of a `@resources` struct that
@@ -1218,6 +1503,7 @@ struct Item
     Type blockType;     // a block's `T`
     int builtinSpirv;
     const(char)* builtinName;
+    int writable;       // a storage buffer: whether it may be written through
 }
 
 /// `ldc.dcompute`'s `UniformBlock!T` or `PushConstants!T`, and its `T`.
@@ -1235,6 +1521,44 @@ Type blockOf(Type t, out bool push)
     return ts.sym.fields[0].type.toBasetype();
 }
 
+/// `ldc.dcompute`'s `StorageBuffer!(T, access)`: its `T` and whether it may
+/// be written through (1), or 0 for `Access.read`.
+bool storageBufferOf(Type t, out Type blockType, out int writable)
+{
+    auto ts = t.toBasetype().isTypeStruct();
+    if (!ts || !isFromLdcDCompute(ts.sym) || ts.sym.ident != Id.dcStorageBuffer)
+        return false;
+    auto ti = ts.sym.isInstantiated();
+    if (!ti || !ti.tiargs || ti.tiargs.length < 1)
+    {
+        error(ts.sym.loc, "unexpected `StorageBuffer` instantiation; does druntime not match compiler version?");
+        fatal();
+    }
+    import dmd.dtemplate : isExpression, isType;
+
+    blockType = isType((*ti.tiargs)[0]);
+    writable = 1;
+    if (ti.tiargs.length > 1)
+        if (auto e = isExpression((*ti.tiargs)[1]))
+            writable = e.toInteger() == 1 ? 1 : 0;
+    return true;
+}
+
+/// Whether `t` is `ldc.dcompute`'s `Workgroup!T`, and its `T`.
+bool workgroupOf(Type t, out Type element)
+{
+    auto ts = t.toBasetype().isTypeStruct();
+    if (!ts || !isFromLdcDCompute(ts.sym) || ts.sym.ident != Id.dcWorkgroup)
+        return false;
+    auto ti = ts.sym.isInstantiated();
+    if (!ti || !ti.tiargs || ti.tiargs.length != 1)
+        return false;
+    import dmd.dtemplate : isType;
+
+    element = isType((*ti.tiargs)[0]);
+    return element !is null;
+}
+
 void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* attr,
     ShaderStage stage, ref Item[] items)
 {
@@ -1247,6 +1571,10 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
     const isBuiltin = builtinId >= 0;
     const isImage = ts && ts.sym.ident == Id.dcSampler2D && isFromLdcDCompute(ts.sym);
     const isSampler = ts && ts.sym.ident == Id.dcSampler && isFromLdcDCompute(ts.sym);
+    const isStorageImage = ts && ts.sym.ident == Id.dcStorageImage2D && isFromLdcDCompute(ts.sym);
+    Type storageType;
+    int storageWritable;
+    const isStorageBuffer = storageBufferOf(dty, storageType, storageWritable);
     bool push;
     auto blockType = blockOf(dty, push);
     const isResources = ts && dcomputeAttribute(ts.sym, Id.udaShaderResources) !is null;
@@ -1265,7 +1593,7 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
         error(vd.loc, "%s parameter `%s` is marked both `@input` and `@uniform`; it must be one", attr, name);
         fatal();
     }
-    if ((isInput || isUniform) && (isImage || isSampler || blockType || isResources))
+    if ((isInput || isUniform) && (isImage || isSampler || isStorageImage || isStorageBuffer || blockType || isResources))
     {
         error(vd.loc, isImage
             ? "%s parameter `%s` is a `Sampler2D`, which takes no `@input` or `@uniform` marker"
@@ -1308,6 +1636,52 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
         items ~= it;
         return;
     }
+    if (isStorageBuffer)
+    {
+        if (!grantedOrUnchecked("storageBuffers"))
+        {
+            error(vd.loc, "%s %s `%s` is a storage buffer, which the profile `%s` does not grant (`storageBuffers`)",
+                attr, what, name, dcomputeActiveProfile());
+            fatal();
+        }
+        if (!storageType.isTypeStruct())
+        {
+            error(vd.loc, "%s %s `%s` cannot be `%s`: a storage buffer is a struct of uniform types",
+                attr, what, name, vd.type.toChars());
+            fatal();
+        }
+        foreach (field; storageType.isTypeStruct().sym.fields)
+            if (field.type.toBasetype().ty == TY.Tarray)
+            {
+                error(field.loc, "%s storage buffer field `%s` of `%s` is a runtime-sized array; a `StorageBuffer!T` is fixed-size",
+                    attr, field.ident.toChars(), name);
+                fatal();
+            }
+        if (auto why = refusal(storageType, Crossing.uniform))
+        {
+            error(vd.loc, "%s %s `%s` cannot be `%s`: %s", attr, what, name, vd.type.toChars(), why);
+            fatal();
+        }
+        checkTranslatable(vd, attr, storageType);
+        it.kind = ItemKind.storageBuffer;
+        it.blockType = storageType;
+        it.writable = storageWritable;
+        items ~= it;
+        return;
+    }
+    if (isStorageImage)
+    {
+        if (!grantedOrUnchecked("storageImages"))
+        {
+            error(vd.loc, "%s %s `%s` is a storage image, which the profile `%s` does not grant (`storageImages`)",
+                attr, what, name, dcomputeActiveProfile());
+            fatal();
+        }
+        checkTranslatable(vd, attr, null);
+        it.kind = ItemKind.storageImage;
+        items ~= it;
+        return;
+    }
     if (blockType)
     {
         if (!blockType.isTypeStruct())
@@ -1327,6 +1701,12 @@ void collectItems(VarDeclaration vd, int parameter, int[] path, const(char)* att
         it.blockType = blockType;
         items ~= it;
         return;
+    }
+    if (isInput && stage == ShaderStage.compute)
+    {
+        error(vd.loc, "%s parameter `%s` is an `@input`; a compute entry point's parameters are resources or built-ins",
+            attr, name);
+        fatal();
     }
     if (isInput || isUniform)
     {
@@ -1447,11 +1827,13 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
     entryNames[entryName] = fd;
 
     // The stage must be one the profile grants (`SHF7`).
-    const stageCap = stage == ShaderStage.vertex ? "vertexStage" : "fragmentStage";
+    const stageCap = stage == ShaderStage.vertex ? "vertexStage"
+        : stage == ShaderStage.compute ? "computeStage" : "fragmentStage";
     if (!grantedOrUnchecked(stageCap))
     {
         error(fd.loc, "%s entry point `%s` is a %s shader, which the profile `%s` does not grant (`%s`)",
-            attr, entry, stage == ShaderStage.vertex ? "vertex".ptr : "fragment".ptr,
+            attr, entry, stage == ShaderStage.vertex ? "vertex".ptr
+                : stage == ShaderStage.compute ? "compute".ptr : "fragment".ptr,
             dcomputeActiveProfile(), stageCap.ptr);
         fatal();
     }
@@ -1460,7 +1842,28 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
     ShaderVariable[] vars;
 
     auto ret = shaderType(fd.type.nextOf());
-    if (stage == ShaderStage.vertex)
+    if (stage == ShaderStage.compute)
+    {
+        if (ret.ty != TY.Tvoid)
+        {
+            error(fd.loc, "%s function `%s` cannot return `%s`: a compute entry point returns `void`",
+                attr, entry, ret.toChars());
+            fatal();
+        }
+        long[3] size;
+        computeShaderOf(fd, size);
+        const total = size[0] * size[1] * size[2];
+        if (size[0] < 1 || size[0] > 128 || size[1] < 1 || size[1] > 128
+            || size[2] < 1 || size[2] > 64 || total < 1 || total > 128)
+        {
+            error(fd.loc, "%s entry point `%s` has workgroup size (%d, %d, %d); each dimension must be at least 1, x and y at most 128, z at most 64, and the product at most 128",
+                attr, entry, cast(int) size[0], cast(int) size[1], cast(int) size[2]);
+            fatal();
+        }
+        foreach (i; 0 .. 3)
+            e.workgroupSize[i] = cast(int) size[i];
+    }
+    else if (stage == ShaderStage.vertex)
     {
         auto ts = ret.isTypeStruct();
         if (!ts)
@@ -1479,7 +1882,6 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
             fatal();
         }
     }
-
     // The parameters, with every `@resources` struct flattened into its
     // fields (`SHR2`), each a resource of the entry point in its place.
     Item[] items;
@@ -1573,6 +1975,12 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
             v.name = it.builtinName;
             break;
         case ItemKind.input:
+            if (stage == ShaderStage.compute)
+            {
+                error(vd.loc, "%s parameter `%s` is an `@input`; a compute entry point's parameters are resources or built-ins",
+                    attr, name);
+                fatal();
+            }
             // An integer vertex input needs a profile that grants it (`SHF5`).
             if (stage == ShaderStage.vertex && isIntegerScalarOrVector(vd.type)
                 && !grantedOrUnchecked("intVertexInputs"))
@@ -1658,6 +2066,19 @@ const(ShaderEntry)* describe(FuncDeclaration fd, ShaderStage stage)
                 v.kind = ShaderVariableKind.looseBlock;
                 v.ordinal = -1;
             }
+            break;
+        case ItemKind.storageBuffer:
+        case ItemKind.storageImage:
+            claim(vd.ident.toString(), vd);
+            const sbinding = it.fixedBinding >= 0 && blocks ? it.fixedBinding
+                : blocks ? nextFreeBinding() : nextBinding++;
+            const isBuffer = it.kind == ItemKind.storageBuffer;
+            recordInterfaceUse(stage, vd, entry, isBuffer ? "storage buffer" : "storage image",
+                sbinding);
+            v.kind = isBuffer ? ShaderVariableKind.storageBuffer : ShaderVariableKind.storageImage;
+            v.ordinal = sbinding;
+            v.blockType = it.blockType;
+            v.writable = it.writable;
             break;
         }
         vars ~= v;

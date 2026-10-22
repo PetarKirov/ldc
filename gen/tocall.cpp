@@ -18,6 +18,7 @@
 #include "gen/abi/abi.h"
 #include "gen/arrays.h"
 #include "gen/dcompute/druntime.h"
+#include "gen/dcompute/target.h"
 #include "gen/classes.h"
 #include "gen/dvalue.h"
 #include "gen/funcgenstate.h"
@@ -187,6 +188,13 @@ static void addExplicitArguments(std::vector<LLValue *> &args, AttrSet &attrs,
       }
       if (isaStruct(llVal)) {
         llVal = DtoSlicePaint(llVal, paramType);
+      } else if (isaPointer(llVal) && isaPointer(paramType) &&
+                 llvm::cast<LLPointerType>(llVal->getType())->getAddressSpace() !=
+                     llvm::cast<LLPointerType>(paramType)->getAddressSpace()) {
+        // A pointer into a non-generic address space (a storage buffer, a
+        // workgroup variable) passed where a generic one is expected, as a
+        // `ref` argument is: that is an address-space cast, not a bitcast.
+        llVal = gIR->ir->CreateAddrSpaceCast(llVal, paramType);
       } else {
         llVal = DtoBitCast(llVal, paramType);
       }
@@ -256,6 +264,22 @@ static LLType *getAtomicType(LLType *type) {
     return nullptr;
   }
 }
+
+/// The memory scope of an atomic on `ptr` in device code: in the SPIR-V
+/// backend's address spaces, 3 is Workgroup and 11 is StorageBuffer, and
+/// Vulkan admits no CrossDevice scope, so a storage-buffer atomic is
+/// Device-scoped and a workgroup one Workgroup-scoped. Any other target
+/// keeps the system scope.
+static llvm::SyncScope::ID deviceAtomicScope(LLValue *ptr) {
+  if (gIR->dcomputetarget &&
+      gIR->dcomputetarget->target == DComputeTarget::ID::Vulkan) {
+    const char *name =
+        ptr->getType()->getPointerAddressSpace() == 3 ? "workgroup" : "device";
+    return gIR->context().getOrInsertSyncScopeID(name);
+  }
+  return llvm::SyncScope::System;
+}
+
 
 bool DtoLowerMagicIntrinsic(IRState *p, FuncDeclaration *fndecl, CallExp *e,
                             DValue *&result) {
@@ -493,7 +517,8 @@ bool DtoLowerMagicIntrinsic(IRState *p, FuncDeclaration *fndecl, CallExp *e,
     auto ret =
         p->ir->CreateAtomicCmpXchg(ptr, cmp, val,
                                    llvm::MaybeAlign(), // default alignment
-                                   successOrdering, failureOrdering);
+                                   successOrdering, failureOrdering,
+                                   deviceAtomicScope(ptr));
     ret->setWeak(isWeak);
 
     // we return a struct; allocate on stack and store to both fields manually
@@ -542,7 +567,8 @@ bool DtoLowerMagicIntrinsic(IRState *p, FuncDeclaration *fndecl, CallExp *e,
     LLValue *ret =
         p->ir->CreateAtomicRMW(llvm::AtomicRMWInst::BinOp(op), ptr, val,
                                llvm::MaybeAlign(), // default alignment
-                               llvm::AtomicOrdering(atomicOrdering));
+                               llvm::AtomicOrdering(atomicOrdering),
+                               deviceAtomicScope(ptr));
     result = new DImValue(exp2->type, ret);
     return true;
   }

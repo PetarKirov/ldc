@@ -51,7 +51,7 @@ public:
       : DComputeTarget(c, ver, ID::Vulkan, "vulkan", "spv", createSPIRVVulkanABI(),
                        // dcompute's Shared is workgroup memory (addrspace 3 in the
                        // SPIR-V backend) and Constant is UniformConstant (2).
-                       {{0, 1, 3, 2, 4}}) {
+                       {{0, 1, 3, 2, 4, 11}}) {
 
     _ir = new IRState("dcomputeTargetVulkan", ctx);
     // The newest SPIR-V each Vulkan version consumes: Vulkan 1.0 takes 1.0,
@@ -141,6 +141,14 @@ public:
         gv.setLinkage(llvm::GlobalValue::InternalLinkage);
         gv.setComdat(nullptr);
       }
+    // Device globals (workgroup memory, constant tables) are the module's
+    // own: hidden, so no `Linkage` capability is asked for. Address spaces
+    // 3 (Workgroup) and 10 (Private) only; interface variables and the
+    // runtime's own globals keep the visibility they were given.
+    for (auto &gv : _ir->module.globals())
+      if (!gv.isDeclaration() && !gv.hasLocalLinkage() &&
+          (gv.getAddressSpace() == 3 || gv.getAddressSpace() == 10))
+        gv.setVisibility(llvm::GlobalValue::HiddenVisibility);
   }
 
   llvm::AttrBuilder buildKernAttrs(StructLiteralExp *kernAttr) {
@@ -303,7 +311,8 @@ public:
   /// carries its own name in `spirv.Name`.
   static std::string interfaceGlobalName(ShaderStage stage, llvm::StringRef name,
                                          bool output) {
-    const char *qualifier = stage == ShaderStage::fragment ? ".fragment" : ".vertex";
+    const char *qualifier = stage == ShaderStage::fragment ? ".fragment"
+        : stage == ShaderStage::compute ? ".compute" : ".vertex";
     return (name + qualifier + (output ? ".out" : ".in")).str();
   }
 
@@ -797,7 +806,13 @@ public:
                                      llvm::GlobalValue::ExternalLinkage,
                                      fd->ident->toChars(), _ir->module);
     f->addFnAttr("hlsl.shader",
-                 stage == ShaderStage::vertex ? "vertex" : "pixel");
+                 stage == ShaderStage::vertex ? "vertex"
+                     : stage == ShaderStage::compute ? "compute" : "pixel");
+    if (stage == ShaderStage::compute)
+      f->addFnAttr("hlsl.numthreads",
+                   std::to_string(entry->workgroupSize[0]) + "," +
+                       std::to_string(entry->workgroupSize[1]) + "," +
+                       std::to_string(entry->workgroupSize[2]));
 
     auto bb = llvm::BasicBlock::Create(ctx, "entry", f);
     llvm::IRBuilder<> builder(ctx);
@@ -868,8 +883,31 @@ public:
       }
       case ShaderVariableKind::image:
       case ShaderVariableKind::sampler:
+      case ShaderVariableKind::storageImage:
         value = buildResourceHandle(builder, pt, v.ordinal, v.name);
         break;
+      case ShaderVariableKind::storageBuffer: {
+        // One `StorageBuffer` block of `T` (std430) at the binding; the D
+        // value wraps the block's base pointer in its storage address
+        // space, so the body's reads and writes go to the buffer.
+        StructDeclaration *bsym = static_cast<TypeStruct *>(v.blockType->toBasetype())->sym;
+        const BlockStruct &b = blockStruct(bsym, /*std430*/ 1, v.decl->loc, /*root=*/true);
+        llvm::Type *handleTy = llvm::TargetExtType::get(
+            ctx, "spirv.VulkanBuffer", {b.type},
+            {/*StorageBuffer*/ 12, v.writable ? 1 : 0});
+        llvm::Value *handle = buildResourceHandle(builder, handleTy, v.ordinal, v.name);
+        auto *p11 = llvm::PointerType::get(ctx, 11);
+        llvm::Value *base = buildIntrinsicCall(builder, "base",
+                                               "llvm.spv.resource.getbasepointer",
+                                               {p11, handleTy}, {handle});
+        StructDeclaration *wsym = static_cast<TypeStruct *>(dty)->sym;
+        llvm::Value *inner = builder.CreateInsertValue(
+            llvm::UndefValue::get(DtoType(wsym->fields[0]->type)), base, 0);
+        value = builder.CreateInsertValue(
+            llvm::UndefValue::get(DtoType(dty)), inner,
+            memberIndex(getIrType(dty)->isAggr(), wsym, wsym->fields[0]));
+        break;
+      }
       case ShaderVariableKind::uniformBlock:
       case ShaderVariableKind::pushConstants:
       case ShaderVariableKind::looseBlock:
@@ -884,7 +922,8 @@ public:
       if (!v.depth) {
         args[v.parameter + first] =
             v.kind == ShaderVariableKind::image ||
-                    v.kind == ShaderVariableKind::sampler
+                    v.kind == ShaderVariableKind::sampler ||
+                    v.kind == ShaderVariableKind::storageImage
                 ? value
                 : asArgument(builder, value, pt);
         continue;

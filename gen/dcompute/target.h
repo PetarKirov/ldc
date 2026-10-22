@@ -35,8 +35,8 @@ public:
   TargetABI *abi;
   llvm::TargetMachine *targetMachine = nullptr;
   // The nominal address spaces in DCompute are Private = 0, Global = 1,
-  // Shared = 2, Constant = 3, Generic = 4
-  std::array<int, 5> mapping;
+  // Shared = 2, Constant = 3, Generic = 4, StorageBuffer = 5
+  std::array<int, 6> mapping;
 
   IRState *_ir;
   std::vector<::Module *> modules;
@@ -45,7 +45,7 @@ public:
   llvm::DenseMap<llvm::Function *, FuncDeclaration *> definitions;
 
   DComputeTarget(llvm::LLVMContext &c, int v, ID id, const char *_short_name,
-                 const char *suffix, TargetABI *a, std::array<int, 5> map)
+                 const char *suffix, TargetABI *a, std::array<int, 6> map)
       : ctx(c), tversion(v), target(id), short_name(_short_name),
         binSuffix(suffix), abi(a), mapping(map), _ir(nullptr) {}
 

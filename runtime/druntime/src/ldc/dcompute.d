@@ -109,6 +109,7 @@ enum AddrSpace : uint
     Shared   = 2,
     Constant = 3,
     Generic  = 4,
+    StorageBuffer = 5,
 }
 
 alias PrivatePointer(T)  = Pointer!(AddrSpace.Private,  T);
@@ -163,7 +164,20 @@ enum ShaderStage : int
 {
     fragment = 0,
     vertex = 1,
+    compute = 2,
 }
+
+/++
+ + Marks a function in a `@compute` module as a compute shader entry point
+ + with workgroup size `(x, y, z)`: `@computeShader(64, 1, 1)`. The function
+ + stays an ordinary D function; the compiler synthesises a `GLCompute`
+ + entry point around it from its signature, as for `@fragment`.
+ +/
+private struct _computeShader {
+    size_t[3] bounds;
+}
+/// ditto
+_computeShader computeShader(size_t x, size_t y, size_t z) => _computeShader([x, y, z]);
 
 /// ditto
 private struct _shader
@@ -301,6 +315,11 @@ enum Capability : int
     derivatives,         /// screen-space derivatives (`OpDPdx`, `OpFwidth`)
     derivativeControl,   /// coarse and fine derivatives (`DerivativeControl`)
     demote,              /// demoting an invocation to a helper (`OpDemoteToHelperInvocation`)
+    computeStage,        /// the compute stage
+    storageBuffers,      /// storage buffers (`StorageBuffer!T` parameters)
+    storageImages,       /// storage images (`StorageImage2D` parameters)
+    workgroupMemory,     /// workgroup memory (`Workgroup!T`) and barriers on it
+    atomics,             /// integer atomics and device memory barriers
 }
 
 /++
@@ -356,6 +375,21 @@ enum Builtin : int
     /// Whether the fragment's primitive faces the viewer, as the pipeline's
     /// front-face state decides: a `bool` fragment input.
     frontFacing = 4,
+    /// The invocation's index in the whole dispatch: a `__vector(int[3])`
+    /// compute input (`GlobalInvocationId`).
+    globalInvocationId = 5,
+    /// The invocation's index in its workgroup: a `__vector(int[3])`
+    /// compute input (`LocalInvocationId`).
+    localInvocationId = 6,
+    /// The workgroup's index in the dispatch: a `__vector(int[3])` compute
+    /// input (`WorkgroupId`).
+    workgroupId = 7,
+    /// The invocation's index within its workgroup, x then y then z: an
+    /// `int` compute input (`LocalInvocationIndex`).
+    localInvocationIndex = 8,
+    /// The dispatch's workgroup count: a `__vector(int[3])` compute input
+    /// (`NumWorkgroups`).
+    numWorkgroups = 9,
 }
 
 /// Marks a parameter, or a field of a `@vertex` result, as the built-in
@@ -438,4 +472,74 @@ static if (__traits(compiles, { __vector(float[2]) a; __vector(float[4]) b; __ve
     pragma(LDC_intrinsic, "llvm.spv.resource.sample.v4f32.tspirv.Image_f32_1_2_0_0_1_0t.tspirv.Samplert.v2f32.v2i32")
     __vector(float[4]) __spirv_resource_sample_2d(Sampler2D image, SamplerState sampler,
         __vector(float[2]) uv, __vector(int[2]) offset) @safe pure nothrow @nogc;
+}
+
+/// Whether a `StorageBuffer!T` may be written through.
+enum Access : int
+{
+    read = 0,     ///
+    readWrite = 1, ///
+}
+
+/++
+ + A fixed-size storage buffer of `T`: on Vulkan, one block whose type is
+ + `T`, laid out by `std430`, in the `StorageBuffer` storage class at the
+ + binding the entry point's resources are numbered with. `value` is the
+ + block's contents, in device memory: reading or writing a field of it
+ + reads or writes the buffer. `Access.read` buffers are read-only; writing
+ + through one fails the compilation.
+ +/
+struct StorageBuffer(T, Access access_ = Access.readWrite)
+{
+    Pointer!(AddrSpace.StorageBuffer, T) data; ///
+    alias data this;
+}
+
+/++
+ + A 2-D storage image of four 32-bit floats (`Rgba32f`), not sampled.
+ + `load` reads a texel and `store` writes one, at an integer coordinate;
+ + a coordinate outside the image has no defined result.
+ +/
+struct StorageImage2D
+{
+    const(void)* handle; ///
+}
+
+static if (__traits(compiles, { __vector(float[4]) b; __vector(int[2]) c; }))
+{
+    /// The texel at `coord` of a storage image: `image.load(coord)`.
+    /// A template so that druntime's own host build never compiles it.
+    __vector(float[4]) load(S : StorageImage2D)(S image, __vector(int[2]) coord)
+        @safe pure nothrow @nogc
+    {
+        __vector(int[2]) noOffset = 0;
+        return __spirv_storage_load(image, coord, 0, noOffset);
+    }
+
+    /// Writes `value` as the texel at `coord`: `image.store(coord, value)`.
+    void store(S : StorageImage2D)(S image, __vector(int[2]) coord, __vector(float[4]) value)
+        @safe pure nothrow @nogc
+    {
+        *__spirv_storage_ptr(image, coord) = value;
+    }
+}
+
+/// Workgroup memory of `T`: at module scope, lowered to a `Workgroup`
+/// variable with no initializer, shared by the invocations of one
+/// workgroup. `value` is the `T` it holds.
+struct Workgroup(T)
+{
+    T value; ///
+    alias value this;
+}
+
+static if (__traits(compiles, { __vector(float[4]) b; __vector(int[2]) c; }))
+{
+    pragma(LDC_intrinsic, "llvm.spv.resource.load.level.v4f32.tspirv.Image_f32_1_2_0_0_2_1.v2i32.i32.v2i32")
+    __vector(float[4]) __spirv_storage_load(StorageImage2D image, __vector(int[2]) coord,
+        int lod, __vector(int[2]) offset) @safe pure nothrow @nogc;
+
+    pragma(LDC_intrinsic, "llvm.spv.resource.getpointer.p11.tspirv.Image_f32_1_2_0_0_2_1.v2i32")
+    __vector(float[4])* __spirv_storage_ptr(StorageImage2D image, __vector(int[2]) coord)
+        @safe pure nothrow @nogc;
 }

@@ -11,11 +11,15 @@
 
 #include "dmd/declaration.h"
 #include "dmd/errors.h"
+#include "dmd/id.h"
+#include "dmd/identifier.h"
 #include "dmd/init.h"
 #include "gen/dynamiccompile.h"
 #include "gen/irstate.h"
 #include "gen/llvm.h"
 #include "gen/llvmhelpers.h"
+#include "gen/dcompute/druntime.h"
+#include "gen/dcompute/target.h"
 #include "gen/logger.h"
 #include "gen/mangling.h"
 #include "gen/pragma.h"
@@ -103,9 +107,28 @@ void IrGlobal::declare() {
   // later, swap it out and replace any existing uses with bitcasts to the
   // previous type.
 
+  // A module-scope `ldc.dcompute.Workgroup!T` is workgroup memory: the
+  // target's Shared address space (3 for Vulkan). Any other `@compute`
+  // global is an `immutable` table: `Private` (10 for Vulkan).
+  unsigned addressSpace = 0;
+  if (gIR->dcomputetarget && V->type) {
+    Type *bt = V->type->toBasetype();
+    bool workgroup = false;
+    if (bt->ty == TY::Tstruct) {
+      StructDeclaration *sd = static_cast<TypeStruct *>(bt)->sym;
+      workgroup = sd->ident == Id::dcWorkgroup && isFromLDC_DCompute(sd);
+    }
+    if (workgroup)
+      addressSpace = gIR->dcomputetarget->mapping[2];
+    else if (gIR->dcomputetarget->target == DComputeTarget::ID::Vulkan &&
+             V->parent && V->parent->isModule() && V->isImmutable() &&
+             strcmp(V->ident->toChars(), "__initZ") != 0)
+      addressSpace = 10;
+  }
+
   LLGlobalVariable *gvar =
       declareGlobal(V->loc, gIR->module, DtoMemType(V->type), irMangle,
-                    isLLConst, V->isThreadlocal(), useDLLImport);
+                    isLLConst, V->isThreadlocal(), useDLLImport, addressSpace);
   value = gvar;
 
   if (V->llvmInternal == LLVMextern_weak)

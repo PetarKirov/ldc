@@ -252,7 +252,8 @@ llvm::GlobalVariable *declareGlobal(Loc loc, llvm::Module &module,
                                     llvm::Type *type,
                                     llvm::StringRef mangledName,
                                     bool isConstant, bool isThreadLocal,
-                                    bool useDLLImport);
+                                    bool useDLLImport,
+                                    unsigned addressSpace = 0);
 
 /// Defines an existing LLVM global, i.e., sets the initial value and finalizes
 /// its linkage and visibility.

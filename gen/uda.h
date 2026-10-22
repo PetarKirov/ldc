@@ -34,6 +34,8 @@ StructLiteralExp *getKernelAttr(Dsymbol *sym);
 
 /// Returns the `@ldc.dcompute._shader` UDA applied to `sym`, or nullptr.
 StructLiteralExp *getShaderAttr(Dsymbol *sym);
+/// Returns the `@ldc.dcompute._computeShader` UDA applied to `sym`, or nullptr.
+StructLiteralExp *getComputeShaderAttr(Dsymbol *sym);
 /// Whether `sym` (a `@fragment` parameter) carries `@ldc.dcompute.input`.
 /// Must match ldc.dcompute.Compilefor + 1 == DComputeCompileFor
 enum class DComputeCompileFor : int

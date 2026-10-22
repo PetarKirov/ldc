@@ -1728,7 +1728,7 @@ llvm::GlobalVariable *declareGlobal(Loc loc, llvm::Module &module,
                                     llvm::Type *type,
                                     llvm::StringRef mangledName,
                                     bool isConstant, bool isThreadLocal,
-                                    bool useDLLImport) {
+                                    bool useDLLImport, unsigned addressSpace) {
   // No TLS support for AVR; spare users from having to add
   // __gshared everywhere.
   const auto arch = global.params.targetTriple->getArch();
@@ -1769,9 +1769,14 @@ llvm::GlobalVariable *declareGlobal(Loc loc, llvm::Module &module,
                                        : clThreadModel.getValue())
           : llvm::GlobalVariable::NotThreadLocal;
 
+  // 0 means the data layout's default globals address space (10, `Private`,
+  // for SPIR-V), not address space 0.
+  if (addressSpace == 0)
+    addressSpace = module.getDataLayout().getDefaultGlobalsAddressSpace();
   auto gvar = new llvm::GlobalVariable(module, type, isConstant,
                                        llvm::GlobalValue::ExternalLinkage,
-                                       nullptr, mangledName, nullptr, tlsModel);
+                                       nullptr, mangledName, nullptr, tlsModel,
+                                       addressSpace);
 
   if (useDLLImport && global.params.targetTriple->isOSWindows())
     gvar->setDLLStorageClass(LLGlobalValue::DLLImportStorageClass);

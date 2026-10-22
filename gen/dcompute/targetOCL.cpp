@@ -69,7 +69,7 @@ public:
       : DComputeTarget(c, oclversion, ID::OpenCL, "ocl", "spv", createSPIRVABI(),
                        // Map from nomimal DCompute address space to OpenCL
                        // address. For OpenCL this is a no-op.
-                       {{0, 1, 2, 3, 4}}) {
+                       {{0, 1, 2, 3, 4, 1}}) {
     const bool is64 = global.params.targetTriple->isArch64Bit();
 
     _ir = new IRState("dcomputeTargetOCL", ctx);

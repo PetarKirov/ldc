@@ -163,7 +163,7 @@ IRState::setGlobalVarInitializer(LLGlobalVariable *globalVar,
   auto globalHelperVar = new LLGlobalVariable(
       module, initializer->getType(), globalVar->isConstant(),
       globalVar->getLinkage(), nullptr, "", nullptr,
-      globalVar->getThreadLocalMode());
+      globalVar->getThreadLocalMode(), globalVar->getAddressSpace());
 #if LLVM_VERSION_MAJOR >= 24
   globalHelperVar->setAlignment(globalVar->getAlign());
 #else

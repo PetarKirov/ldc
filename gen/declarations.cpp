@@ -286,7 +286,8 @@ public:
       }
 
       Logger::println("global variable");
-      assert(!irs->dcomputetarget);
+      // A `@compute` module's only globals are the ones its semantic
+      // analysis let through: `immutable` tables and `Workgroup!T`.
 
       DtoResolveVariable(decl);
       decl->ir->setDefined();
