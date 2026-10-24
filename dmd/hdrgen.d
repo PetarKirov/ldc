@@ -4620,6 +4620,7 @@ string EXPtoString(EXP op)
         EXP.complex80 : "creal",
         EXP.null_ : "null",
         EXP.string_ : "string",
+        EXP.interpolated : "interpolated string",
         EXP.arrayLiteral : "arrayliteral",
         EXP.assocArrayLiteral : "assocarrayliteral",
         EXP.classReference : "classreference",
