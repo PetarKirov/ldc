@@ -187,8 +187,11 @@ int main(int argc, const char **argv) {
       /*Errs*/nullptr,
 #endif
       /*VFS*/nullptr,
-      /*EnvVar=*/nullptr,
-      /*LongOptionsUseDoubleDash=*/true);
+      /*EnvVar=*/nullptr
+#if LLVM_VERSION_MAJOR < 24
+      , /*LongOptionsUseDoubleDash=*/true
+#endif
+  );
 
   if (input.empty())
     fatal("", "input filename is not specified");
