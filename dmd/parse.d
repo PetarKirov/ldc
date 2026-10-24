@@ -9779,6 +9779,7 @@ immutable PREC[EXP.max + 1] precedence =
     EXP.complex80 : PREC.primary,
     EXP.null_ : PREC.primary,
     EXP.string_ : PREC.primary,
+    EXP.interpolated : PREC.primary,
     EXP.arrayLiteral : PREC.primary,
     EXP.assocArrayLiteral : PREC.primary,
     EXP.classReference : PREC.primary,
