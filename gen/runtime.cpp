@@ -731,9 +731,11 @@ static void buildRuntimeModule() {
       createFwdDecl(LINK::c, intTy, {"_d_eh_personality"},
                     {intTy, voidPtrTy, voidPtrTy});
     } else if (global.params.targetTriple->isWasm()) {
-      // (int ver, int actions, ulong eh_class, ptr eh_info, ptr context)
+      // (ptr exception_object): since LLVM 24 (llvm/llvm-project#209282),
+      // WasmEHPrepare calls the personality itself with this signature;
+      // older LLVM only names it, calling `_Unwind_CallPersonality` instead.
       createFwdDecl(LINK::c, intTy, {"__gxx_wasm_personality_v0"},
-                    {intTy, intTy, ulongTy, voidPtrTy, voidPtrTy});
+                    {voidPtrTy});
     } else {
       // (int ver, int actions, ulong eh_class, ptr eh_info, ptr context)
       createFwdDecl(LINK::c, intTy, {"_d_eh_personality"},
