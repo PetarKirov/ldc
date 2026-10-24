@@ -562,6 +562,13 @@ else version (WebAssembly)
     // function
     extern(C) _Unwind_LandingPadContext __wasm_lpad_context;
 
+    // Where a landing pad finds the context since LLVM 24
+    // (llvm/llvm-project#222747), as libunwind provides it.
+    extern(C) _Unwind_LandingPadContext* _Unwind_GetWasmLPadContext() nothrow @nogc
+    {
+        return &__wasm_lpad_context;
+    }
+
     // The personality, as a landing pad calls it since LLVM 24
     // (llvm/llvm-project#209282). The name is the one LLVM classifies as a
     // Wasm personality; the compiler attaches it to every function with a
