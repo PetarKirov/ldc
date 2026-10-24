@@ -641,7 +641,8 @@ createTargetMachine(const std::string targetTriple, const std::string arch,
 
 #if LLVM_VERSION_MAJOR >= 21 && LLVM_VERSION_MAJOR <= 22
     // we need to enforce `--exception-model=wasm`, although it should be
-    // implied by `--wasm-enable-eh`
+    // implied by `--wasm-enable-eh` (since LLVM 24, the module flag from
+    // gen/modules.cpp is what selects it)
     targetOptions.ExceptionModel = llvm::ExceptionHandling::Wasm;
 #endif
   }
