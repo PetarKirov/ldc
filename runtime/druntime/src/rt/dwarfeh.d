@@ -562,7 +562,11 @@ else version (WebAssembly)
     // function
     extern(C) _Unwind_LandingPadContext __wasm_lpad_context;
 
-    extern(C) _Unwind_Reason_Code _Unwind_CallPersonality(_Unwind_Exception *exception_object) {
+    // The personality, as a landing pad calls it since LLVM 24
+    // (llvm/llvm-project#209282). The name is the one LLVM classifies as a
+    // Wasm personality; the compiler attaches it to every function with a
+    // landing pad.
+    extern(C) _Unwind_Reason_Code __gxx_wasm_personality_v0(_Unwind_Exception *exception_object) {
         // Reset the selector.
         __wasm_lpad_context.selector = 0;
 
@@ -571,6 +575,11 @@ else version (WebAssembly)
         return _d_eh_personality_common(
             _UA_SEARCH_PHASE, exception_object.exception_class, exception_object,
             cast(_Unwind_Context *)&__wasm_lpad_context);
+    }
+
+    // What a landing pad calls with LLVM 23 and older.
+    extern(C) _Unwind_Reason_Code _Unwind_CallPersonality(_Unwind_Exception *exception_object) {
+        return __gxx_wasm_personality_v0(exception_object);
     }
 
     extern(C) void _Unwind_DeleteException(_Unwind_Exception *exception_object) {
