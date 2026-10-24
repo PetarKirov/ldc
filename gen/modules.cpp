@@ -46,6 +46,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/LinkAllPasses.h"
 #include "llvm/ProfileData/InstrProfReader.h"
+#include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -397,6 +398,17 @@ void addModuleFlags(llvm::Module &m) {
   // Target specific flags
   const auto ModuleErrFlag = llvm::Module::Error;
   switch (global.params.targetTriple->getArch()) {
+#if LLVM_VERSION_MAJOR >= 24
+  // The exception model is the module's since LLVM 24
+  // (llvm/llvm-project#232977); wasm targets use Wasm EH.
+  case llvm::Triple::wasm32:
+  case llvm::Triple::wasm64:
+    m.setModuleFlag(ModuleErrFlag, "exception-model",
+                    llvm::MDString::get(m.getContext(),
+                                        llvm::getExceptionModelName(
+                                            llvm::ExceptionHandling::Wasm)));
+    break;
+#endif
   case llvm::Triple::ppc64:
   case llvm::Triple::ppc64le:
     if (target.RealProperties.mant_dig == 113) {

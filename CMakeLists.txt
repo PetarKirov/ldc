@@ -952,7 +952,12 @@ makeConfSection(NAME "30-compiler" SECTION "default"
 )
 
 # Add a base config for all wasm targets, setting some linker defaults and enabling EH.
-set(wasm_eh_switches --wasm-enable-eh)
+# LLVM 24 dropped `--wasm-enable-eh` for `-exception-model=wasm`, which the
+# driver sets (llvm/llvm-project#224313).
+set(wasm_eh_switches)
+if(LLVM_VERSION_MAJOR LESS 24)
+    list(APPEND wasm_eh_switches --wasm-enable-eh)
+endif()
 if(LLVM_VERSION_MAJOR GREATER_EQUAL 20)
     list(APPEND wasm_eh_switches --wasm-use-legacy-eh=false)
 elseif(LLVM_VERSION_MAJOR GREATER_EQUAL 19)
