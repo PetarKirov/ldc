@@ -1255,9 +1255,16 @@ version (LDC)
 {
     // We do not want to depend on __tls_get_addr for non-Shared builds to support
     // linking against a static C runtime.
+    //
+    // Bionic is excluded: its C runtime is always dynamic (exporting
+    // __tls_get_addr since API 29), while a static druntime is routinely
+    // linked into a dlopen'd shared library, whose TLS block is dynamic and
+    // does not sit just below the TCB. The static-offset shortcut then hands
+    // the GC a range that is not the library's TLS, and objects referenced
+    // only from TLS are collected while still in use.
     version (X86)    version = X86_Any;
     version (X86_64) version = X86_Any;
-    version (Shared) {} else version (linux) version (X86_Any)
+    version (Shared) {} else version (CRuntime_Bionic) {} else version (linux) version (X86_Any)
         version = Static_Linux_X86_Any;
 }
 
