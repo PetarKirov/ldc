@@ -17,6 +17,7 @@
 #include "dmd/init.h"
 #include "dmd/module.h"
 #include "dmd/template.h"
+#include "driver/cl_options.h"
 #include "gen/abi/abi.h"
 #include "gen/arrays.h"
 #include "gen/classes.h"
@@ -279,7 +280,8 @@ void DtoAssert(Module *M, Loc loc, DValue *msg) {
 void DtoCAssert(Module *M, Loc loc, LLValue *msg) {
   const auto &triple = *global.params.targetTriple;
   const auto file =
-      DtoConstCString(loc.filename() ? loc.filename() : M->srcfile.toChars());
+      DtoConstCString(DtoRemapFilePath(
+          loc.filename() ? loc.filename() : M->srcfile.toChars()));
   const auto line = DtoConstUint(loc.linnum());
   const auto fn = getCAssertFunction(loc, gIR->module);
 
@@ -345,7 +347,16 @@ void DtoThrow(Loc loc, DValue *e) {
  ******************************************************************************/
 
 LLConstant *DtoModuleFileName(Module *M, Loc loc) {
-  return DtoConstString(loc.filename() ? loc.filename() : M->srcfile.toChars());
+  return DtoConstString(
+      DtoRemapFilePath(loc.filename() ? loc.filename() : M->srcfile.toChars()));
+}
+
+const char *DtoRemapFilePath(const char *path) {
+  llvm::SmallString<256> p(path);
+  for (auto &[from, to] : llvm::reverse(opts::macroPrefixMap))
+    if (llvm::sys::path::replace_path_prefix(p, from, to))
+      return mem.xstrdup(p.c_str());
+  return path;
 }
 
 /******************************************************************************

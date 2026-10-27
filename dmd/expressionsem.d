@@ -17135,6 +17135,12 @@ Expression resolveLoc(Expression exp, Loc loc, Scope* sc)
         else
             s = loc.isValid() ? loc.filename : sc._module.ident.toChars();
 
+        version (IN_LLVM)
+        {
+            import gen.llvmhelpers : DtoRemapFilePath;
+            s = DtoRemapFilePath(s);
+        }
+
         Expression e = new StringExp(loc, s.toDString());
         return e.expressionSemantic(sc);
     }

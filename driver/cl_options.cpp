@@ -231,25 +231,45 @@ cl::opt<bool> emitDwarfDebugInfo(
 
 // Prefix map for filenames in DWARF debuginfo
 llvm::SmallVector<std::pair<std::string, std::string>, 0> debugPrefixMap;
+// Prefix map for `__FILE__`, `__FILE_FULL_PATH__` and the file names passed to
+// the runtime's error functions
+llvm::SmallVector<std::pair<std::string, std::string>, 0> macroPrefixMap;
 
-struct DwarfPrefixParser : public cl::parser<std::string> {
-  explicit DwarfPrefixParser(cl::Option &O) : cl::parser<std::string>(O) {}
+enum PrefixMaps { DebugPrefix = 1, MacroPrefix = 2 };
+
+template <int maps> struct PrefixMapParser : public cl::parser<std::string> {
+  explicit PrefixMapParser(cl::Option &O) : cl::parser<std::string>(O) {}
 
   bool parse(cl::Option &O, llvm::StringRef /*ArgName*/, llvm::StringRef Arg,
              std::string & /*Val*/) {
     auto [from, to] = Arg.split('=');
     if (from.empty() || to.empty()) {
-      return O.error("invalid debug prefix map: " + Arg);
+      return O.error("invalid prefix map: " + Arg);
     }
-    debugPrefixMap.emplace_back(from.str(), to.str());
+    if (maps & DebugPrefix)
+      debugPrefixMap.emplace_back(from.str(), to.str());
+    if (maps & MacroPrefix)
+      macroPrefixMap.emplace_back(from.str(), to.str());
     return false;
   }
 };
 
-static cl::opt<std::string, false, DwarfPrefixParser> fdebugPrefixMap(
-    "fdebug-prefix-map", cl::ZeroOrMore,
-    cl::desc("Prefix map for filenames in DWARF debuginfo"),
-    cl::value_desc("<old>=<new>"));
+static cl::opt<std::string, false, PrefixMapParser<DebugPrefix>>
+    fdebugPrefixMap("fdebug-prefix-map", cl::ZeroOrMore,
+                    cl::desc("Prefix map for filenames in DWARF debuginfo"),
+                    cl::value_desc("<old>=<new>"));
+
+static cl::opt<std::string, false, PrefixMapParser<MacroPrefix>>
+    fmacroPrefixMap(
+        "fmacro-prefix-map", cl::ZeroOrMore,
+        cl::desc("Prefix map for __FILE__, __FILE_FULL_PATH__ and the file "
+                 "names of runtime errors"),
+        cl::value_desc("<old>=<new>"));
+
+static cl::opt<std::string, false, PrefixMapParser<DebugPrefix | MacroPrefix>>
+    ffilePrefixMap("ffile-prefix-map", cl::ZeroOrMore,
+                   cl::desc("Both -fdebug-prefix-map and -fmacro-prefix-map"),
+                   cl::value_desc("<old>=<new>"));
 
 cl::opt<bool> noAsm("noasm", cl::desc("Disallow use of inline assembler"),
                     cl::ZeroOrMore);
