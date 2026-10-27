@@ -901,9 +901,13 @@ static void buildRuntimeModule() {
 static void emitInstrumentationFn(const char *name) {
   LLFunction *fn = getRuntimeFunction(Loc(), gIR->module, name);
 
-  // Grab the address of the calling function
-  auto *caller =
-      gIR->ir->CreateCall(GET_INTRINSIC_DECL(returnaddress, {}), DtoConstInt(0));
+  // Grab the address of the calling function. `llvm.returnaddress` is
+  // overloaded on its pointer type since LLVM 24; before, it takes none.
+  llvm::SmallVector<llvm::Type *, 1> overloads;
+  if (llvm::Intrinsic::isOverloaded(llvm::Intrinsic::returnaddress))
+    overloads.push_back(getOpaquePtrType());
+  auto *caller = gIR->ir->CreateCall(
+      GET_INTRINSIC_DECL(returnaddress, overloads), DtoConstInt(0));
   auto callee = gIR->topfunc();
 
   gIR->ir->CreateCall(fn, {callee, caller});
