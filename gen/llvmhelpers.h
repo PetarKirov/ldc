@@ -66,6 +66,11 @@ void DtoThrow(Loc loc, DValue *e);
 // returns module file name
 LLConstant *DtoModuleFileName(Module *M, Loc loc);
 
+/// Applies the first matching `-fmacro-prefix-map` (the last given wins) to
+/// a file name that the program will see: `__FILE__`, `__FILE_FULL_PATH__`
+/// and the file names passed to the runtime's error functions.
+const char *DtoRemapFilePath(const char *path);
+
 /// emits goto to LabelStatement with the target identifier
 void DtoGoto(Loc loc, LabelDsymbol *target);
 

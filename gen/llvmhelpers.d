@@ -21,3 +21,6 @@ extern (C++) void DtoSetFuncDeclIntrinsicName(TemplateInstance ti, TemplateDecla
 
 extern (C++) bool isTargetWindowsMSVC();
 extern (C++) bool isTargetWasm();
+
+/// Applies `-fmacro-prefix-map` to a file name the program will see.
+extern (C++) const(char)* DtoRemapFilePath(const(char)* path);

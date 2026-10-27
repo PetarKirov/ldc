@@ -48,6 +48,7 @@ extern cl::opt<bool> invokedByLDMD;
 extern cl::opt<bool> compileOnly;
 extern cl::opt<bool> emitDwarfDebugInfo;
 extern llvm::SmallVector<std::pair<std::string, std::string>, 0> debugPrefixMap; // Prefix map for filenames in DWARF debuginfo
+extern llvm::SmallVector<std::pair<std::string, std::string>, 0> macroPrefixMap; // Prefix map for `__FILE__` and the file names of runtime errors
 extern cl::opt<bool> noAsm;
 extern cl::opt<bool> dontWriteObj;
 extern cl::opt<std::string> objectFile;
