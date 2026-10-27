@@ -206,6 +206,12 @@ void ArgsBuilder::addLTOLinkFlags() {
     addLTOGoldPluginFlags(!isLld);
   } else if (global.params.targetTriple->isOSDarwin()) {
     addDarwinLTOFlags();
+  } else if (global.params.targetTriple->isOSWASI() &&
+             !useInternalLLDForLinking()) {
+    // A WASI program links through the C driver (clang). Telling it that this
+    // is an LTO link makes it take the sysroot's LTO builds of the C and C++
+    // libraries (`lib/<triple>/llvm-lto/`), not the native-code ones.
+    args.push_back(opts::isUsingThinLTO() ? "-flto=thin" : "-flto=full");
   }
 
   // Pass Fat LTO option to LLD
