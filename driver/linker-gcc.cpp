@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "dmd/errors.h"
+#include "driver/args.h"
 #include "driver/cl_options.h"
 #include "driver/cl_options_instrumentation.h"
 #include "driver/cl_options_sanitizers.h"
@@ -22,6 +23,7 @@
 #include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 
@@ -855,6 +857,29 @@ int linkObjToBinaryGcc(llvm::StringRef outputPath,
   logstr << "\n"; // FIXME where's flush ?
 
   // try to call linker
-  return executeToolAndWait(Loc(), tool, argsBuilder->args,
-                            global.params.v.verbose);
+  int status = executeToolAndWait(Loc(), tool, argsBuilder->args,
+                                  global.params.v.verbose);
+
+  // As clang does: on Darwin the linked binary only maps its debug info to
+  // the object files' DWARF, which atos follows but llvm-symbolizer and a
+  // debugger without the objects do not; dsymutil gathers it into a .dSYM.
+  // `DSYMUTIL` names the tool; without one on the PATH, the step is skipped.
+  // The binary is linked either way, so a failed .dSYM fails nothing:
+  // dsymutil cannot tell apart archive members with the same name and no
+  // timestamp, which deterministic archives such as druntime's have.
+  if (status == 0 && global.params.symdebug &&
+      global.params.targetTriple->isOSDarwin()) {
+    std::string name = env::get("DSYMUTIL");
+    if (name.empty())
+      name = "dsymutil";
+    if (auto dsymutil = llvm::sys::findProgramByName(name)) {
+      const llvm::StringRef dsymArgs[] = {*dsymutil, "--quiet",
+                                          "--verify-dwarf=none", outputPath};
+      if (global.params.v.verbose)
+        llvm::outs() << *dsymutil << " --quiet --verify-dwarf=none "
+                     << outputPath << "\n";
+      llvm::sys::ExecuteAndWait(*dsymutil, dsymArgs);
+    }
+  }
+  return status;
 }
