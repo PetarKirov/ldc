@@ -19,11 +19,22 @@ else version (TVOS)
 else version (WatchOS)
     version = Darwin;
 
-version(LDC) version (Darwin)
+version(LDC)
 {
-    // Use our own backtrace() based on _Unwind_Backtrace(), as the former (from
-    // execinfo) doesn't seem to handle missing frame pointers too well.
-    version = DefineBacktrace_using_UnwindBacktrace;
+    version (Darwin)
+    {
+        // Use our own backtrace() based on _Unwind_Backtrace(), as the former
+        // (from execinfo) doesn't seem to handle missing frame pointers too
+        // well.
+        version = DefineBacktrace_using_UnwindBacktrace;
+    }
+    else version (CRuntime_Glibc)
+    {
+        // glibc's backtrace() calls _Unwind_Backtrace() from a libgcc_s it
+        // loads on first use: a second unwinder in a program linked against
+        // LLVM's libunwind. Call the program's own _Unwind_Backtrace().
+        version = DefineBacktrace_using_UnwindBacktrace;
+    }
 }
 
 version (DRuntime_Use_Libunwind)
