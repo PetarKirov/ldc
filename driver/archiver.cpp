@@ -14,6 +14,7 @@
 #include "driver/cl_options.h"
 #include "driver/tool.h"
 #include "gen/logger.h"
+#include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Object/Archive.h"
@@ -154,6 +155,16 @@ object::Archive::Kind getKindFromMember(const NewArchiveMember &Member) {
 
   // squelch the error in case we had a non-object file
   consumeError(OptionalObject.takeError());
+
+  // Link-time-optimization objects are bitcode: their triple names the
+  // format the target's linker reads, as for llvm-ar.
+  auto TripleOrErr = getBitcodeTargetTriple(Member.Buf->getMemBufferRef());
+  if (TripleOrErr) {
+    return Triple(*TripleOrErr).isOSDarwin() ? object::Archive::K_DARWIN
+                                             : object::Archive::K_GNU;
+  }
+  consumeError(TripleOrErr.takeError());
+
   return getDefaultForHost();
 }
 
