@@ -195,6 +195,9 @@ typedef unsigned long long __uint64_t;
 #define _Float64x long double
 #define _Float128 long double
 #define __float128 long double
+#else
+// For clang, glibc's bits/floatn.h declares `typedef __float128 _Float128`.
+#define __float128 long double
 #endif
 
 #ifdef __aarch64__
