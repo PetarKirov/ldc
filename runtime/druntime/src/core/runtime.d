@@ -684,7 +684,7 @@ version (DefineBacktrace_using_UnwindBacktrace)
 {
     import core.internal.backtrace.unwind;
 
-    private int backtrace(void** buffer, int maxSize) nothrow
+    private int backtrace(void** buffer, int maxSize) nothrow @nogc
     {
         if (maxSize < 0) return 0;
 
@@ -695,7 +695,7 @@ version (DefineBacktrace_using_UnwindBacktrace)
             int entriesWritten = 0;
         }
 
-        static extern(C) int handler(_Unwind_Context* context, void* statePtr)
+        static extern(C) int handler(_Unwind_Context* context, void* statePtr) nothrow @nogc
         {
             auto state = cast(State*)statePtr;
             if (state.entriesWritten >= state.maxSize) return _URC_END_OF_STACK;
@@ -830,6 +830,11 @@ else version (Posix) private class DefaultTraceInfo : Throwable.TraceInfo
         // in CALL instruction address range for backtrace
         enum CALL_INSTRUCTION_SIZE = 1;
 
+        // The constructor is `@nogc`: a backtrace() that is not compiles out
+        // of this check, and traces fall back to walking frame pointers.
+        version (DefineBacktrace_using_UnwindBacktrace)
+            static assert(__traits(compiles, backtrace((void**).init, int.init)),
+                "backtrace() must be callable from @nogc code");
         static if (__traits(compiles, backtrace((void**).init, int.init)))
             numframes = cast(int) backtrace(this.callstack.ptr, MAXFRAMES);
         // Backtrace succeeded, adjust the frame to point to the caller
