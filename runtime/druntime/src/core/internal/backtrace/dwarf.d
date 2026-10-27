@@ -287,10 +287,11 @@ version (Darwin) {
     private void resolveAddressesWithAtos(Location[] locations) @nogc nothrow
     {
         import core.stdc.stdio : fclose, fflush, fgets, fprintf, printf, snprintf;
-        import core.stdc.stdlib : exit;
         import core.sys.posix.stdio : fdopen;
-        import core.sys.posix.unistd : close, dup2, execlp, fork, getpid, pipe;
-        import core.sys.posix.sys.wait : waitpid;
+        import core.stdc.signal : SIG_IGN, signal;
+        import core.sys.posix.signal : SIGPIPE;
+        import core.sys.posix.unistd : _exit, close, dup2, execlp, fork, getpid, pipe;
+        import core.sys.posix.sys.wait : WEXITSTATUS, WIFEXITED, waitpid;
         // Create in/out pipes to communicate with the forked exec
         int[2] dummy_pipes; // these dummy pipes are there to prevent funny issues when stdin/stdout is closed and pipe returns id 0 or 1
         int[2] pipes_to_atos;
@@ -330,11 +331,16 @@ version (Darwin) {
             const(char)* atos_p_arg = "-p";
             const(char)* atos_fullpath_arg = "-fullPath";
             execlp(atos_executable, atos_executable, atos_fullpath_arg, atos_p_arg, pid_str.ptr, null);
-            // If exec returns, an error occurred, need to exit the forked process here.
-            printf("some exec error!\n");
-            exit(0);
+            // If exec returns, atos is not available. Exit without writing to
+            // the pipe, which the parent reads as atos' output, and without
+            // running the parent's exit handlers or flushing its stdio buffers.
+            _exit(127);
         }
         // Parent process just continues from here.
+        // Without atos the child has exited, and writing to it would raise
+        // SIGPIPE; a failed write ends the exchange instead.
+        auto previousSigpipe = signal(SIGPIPE, SIG_IGN);
+        scope (exit) signal(SIGPIPE, previousSigpipe);
         // Close unused pipes
         close(atos_stdin);
         close(atos_stdout);
@@ -345,8 +351,8 @@ version (Darwin) {
         char* status_ptr = null;
         foreach (ref loc; locations)
         {
-            fprintf(to_atos, "%p\n", loc.address);
-            fflush(to_atos);
+            if (fprintf(to_atos, "%p\n", loc.address) < 0 || fflush(to_atos) != 0)
+                break;
             read_buffer[0] = '\0';
             status_ptr = fgets(read_buffer.ptr, read_buffer.sizeof, from_atos);
             if (!status_ptr)
@@ -359,13 +365,17 @@ version (Darwin) {
                 loc.line = parsed_loc.line;
             }
         }
-        if (!status_ptr)
-            printf("\nDid not succeed in using 'atos' for extra debug information.\n");
         fclose(to_atos);
         fclose(from_atos);
         close(write_to_atos);
         close(read_from_atos);
-        waitpid(child_id, null, 0);
+        int child_status;
+        waitpid(child_id, &child_status, 0);
+        // A child that could not run atos exits with 127: atos is not installed,
+        // which needs no message.
+        const atosMissing = WIFEXITED(child_status) && WEXITSTATUS(child_status) == 127;
+        if (!status_ptr && !atosMissing)
+            printf("\nDid not succeed in using 'atos' for extra debug information.\n");
     }
     private Location parseAtosLine(char* buffer) @nogc nothrow
     {
