@@ -44,6 +44,12 @@ if(LDC_BUNDLE_LLVM_TOOLS)
           set(link_llvmdebuginfod "${LLVM_LIBRARY_DIRS}/LLVMDebuginfod.lib")
         else()
           set(link_llvmdebuginfod -lLLVMDebuginfod)
+          # Newer LLVM moved Debuginfod's HTTP client and server into their
+          # own library, which Debuginfod needs after it in a static link.
+          find_library(LLVM_HTTP_LIB NAMES LLVMHTTP PATHS ${LLVM_LIBRARY_DIRS} NO_DEFAULT_PATH)
+          if(LLVM_HTTP_LIB)
+            set(link_llvmdebuginfod ${link_llvmdebuginfod} -lLLVMHTTP)
+          endif()
           find_package(CURL)
           if(CURL_FOUND)
             set(link_llvmdebuginfod ${link_llvmdebuginfod} CURL::libcurl)
