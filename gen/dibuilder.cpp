@@ -417,7 +417,10 @@ DIType DIBuilder::CreateEnumType(TypeEnum *type) {
       getTypeAllocSize(T) * 8,               // size (bits)
       getABITypeAlign(T) * 8,                // align (bits)
       DBuilder.getOrCreateArray(subscripts), // subscripts
-      CreateTypeDescription(ed->memtype));
+      // The underlying integral type, not `memtype`, which may be another
+      // enum: DWARF enumerations have an integer base type, and LLVM
+      // asserts on a constant whose enumeration's base is an enumeration.
+      CreateTypeDescription(tb));
 }
 
 DIType DIBuilder::CreatePointerType(TypePointer *type) {
