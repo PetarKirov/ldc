@@ -150,7 +150,7 @@ version (LDC) // simplify runtime function forward declaration
 else
     void _Unwind_Resume(_Unwind_Exception* exception_object);
 _Unwind_Reason_Code _Unwind_Resume_or_Rethrow(_Unwind_Exception* exception_object);
-_Unwind_Reason_Code _Unwind_Backtrace(_Unwind_Trace_Fn, void*) nothrow;
+_Unwind_Reason_Code _Unwind_Backtrace(_Unwind_Trace_Fn, void*) nothrow @nogc;
 
 version (ARM_EABI_UNWINDER)
 {
@@ -166,7 +166,7 @@ version (ARM_EABI_UNWINDER)
     void _d_eh_SetGR(_Unwind_Context* context, int index, _Unwind_Word new_value) nothrow;
     alias _Unwind_SetGR = _d_eh_SetGR;
 
-    _Unwind_Ptr _d_eh_GetIP(_Unwind_Context* context) nothrow;
+    _Unwind_Ptr _d_eh_GetIP(_Unwind_Context* context) nothrow @nogc;
     alias _Unwind_GetIP = _d_eh_GetIP;
 
     _Unwind_Ptr _d_eh_GetIPInfo(_Unwind_Context* context, int*) nothrow;
@@ -179,7 +179,7 @@ else
 {
     _Unwind_Word _Unwind_GetGR(_Unwind_Context* context, int index) nothrow;
     void _Unwind_SetGR(_Unwind_Context* context, int index, _Unwind_Word new_value) nothrow;
-    _Unwind_Ptr _Unwind_GetIP(_Unwind_Context* context) nothrow;
+    _Unwind_Ptr _Unwind_GetIP(_Unwind_Context* context) nothrow @nogc;
     _Unwind_Ptr _Unwind_GetIPInfo(_Unwind_Context* context, int*) nothrow;
     void _Unwind_SetIP(_Unwind_Context* context, _Unwind_Ptr new_value) nothrow;
 }
