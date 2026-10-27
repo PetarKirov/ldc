@@ -16,6 +16,8 @@
  */
 module ldc.profile;
 
+import ldc.intrinsics : LLVM_atleast;
+
 version = HASHED_FUNC_NAMES;
 
 @nogc:
@@ -40,13 +42,28 @@ extern(C++) struct ProfileData {
         else
             return cast(inout(ulong)*) ((cast(size_t) &this) + cast(size_t) RelativeCounters);
     }
+    // LLVM 24 adds the uniform counters and the offload wave size, and
+    // spells the value sites out per kind (IPVK_Last + 1 = 3).
+    static if (LLVM_atleast!24)
+        private void* RelativeUniformCounters;
     void* BitmapPtr;
     void* FunctionPointer;
     void* Values;
     uint NumCounters;
-    ushort NumValueSites;
+    static if (LLVM_atleast!24)
+    {
+        ushort[3] NumValueSites;
+        ushort OffloadDeviceWaveSize;
+    }
+    else
+        ushort NumValueSites;
     uint NumBitmapBytes;
 }
+
+// The runtime walks an array of these: a size that differs from LLVM's
+// record finds the wrong function's data.
+static if (LLVM_atleast!24 && size_t.sizeof == 8)
+    static assert(ProfileData.sizeof == 72);
 
 // Symbols provided by profile-rt lib
 extern(C) {
