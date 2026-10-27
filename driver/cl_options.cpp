@@ -274,6 +274,17 @@ static cl::opt<std::string, false, PrefixMapParser<DebugPrefix | MacroPrefix>>
 cl::opt<bool> noAsm("noasm", cl::desc("Disallow use of inline assembler"),
                     cl::ZeroOrMore);
 
+cl::opt<WasiExecModel> wasiExecModel(
+    "mexec-model", cl::ZeroOrMore,
+    cl::desc("WASI execution model of the linked program (default: command)"),
+    cl::values(clEnumValN(WasiExecModel::Command, "command",
+                          "A program with `main`"),
+               clEnumValN(WasiExecModel::Reactor, "reactor",
+                          "A module without `main` whose host calls the "
+                          "exported `_initialize` first, which starts the D "
+                          "runtime")),
+    cl::init(WasiExecModel::Command));
+
 // Output file options
 cl::opt<bool> dontWriteObj("o-", cl::desc("Do not write object file"),
                            cl::ZeroOrMore);

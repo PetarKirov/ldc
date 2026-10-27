@@ -566,6 +566,19 @@ void ArgsBuilder::build(llvm::StringRef outputPath,
   args.push_back("-o");
   args.push_back(std::string(outputPath));
 
+  // A WASI reactor has no `main`. The C driver links its start file, whose
+  // `_initialize` runs the C constructors; druntime's
+  // `_d_wasi_reactor_init` is one of them, and starts the D runtime.
+  if (opts::wasiExecModel == opts::WasiExecModel::Reactor) {
+    if (!triple.isOSWASI()) {
+      error(Loc(), "`-mexec-model=reactor` is for WASI targets only");
+    } else {
+      args.push_back("-mexec-model=reactor");
+      if (!defaultLibNames.empty())
+        args.push_back("-Wl,--undefined=_d_wasi_reactor_init");
+    }
+  }
+
   addSanitizers(triple);
 
   if (opts::fXRayInstrument) {
