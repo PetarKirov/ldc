@@ -209,6 +209,7 @@ typedef struct {} __SVFloat64_t;
 
 #endif // __linux__
 
-#if __APPLE__
+// ImportC has no 128-bit integer type. Headers guard their `__int128` uses on
+// `__SIZEOF_INT128__`, which clang predefines on 64-bit targets: macOS's SDK,
+// and Linux's (`linux/types.h` declares `__s128`/`__u128` under it).
 #undef __SIZEOF_INT128__
-#endif
