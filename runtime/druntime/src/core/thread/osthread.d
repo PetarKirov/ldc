@@ -1993,7 +1993,7 @@ version (LDC_Windows)
 }
 else version (WebAssembly)
 {
-    private extern(C) extern ubyte __stack_high;
+    private extern(C) extern __gshared ubyte __stack_high;
     private extern(D) void* getStackBottom() nothrow @nogc
     {
         return &__stack_high;
