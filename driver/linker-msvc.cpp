@@ -37,10 +37,12 @@ void addMscrtLibs(bool useInternalToolchain, std::vector<std::string> &args) {
   // We need the vcruntime lib for druntime's exception handling (ldc.eh_msvc).
   // Pick one of the 4 variants matching the selected main UCRT lib.
 
-  if (useInternalToolchain) {
-    assert(mscrtlibName.contains_insensitive("vcruntime"));
+  // The internal toolchain's MinGW-based `vcruntime140` covers both. An
+  // explicitly selected MS CRT (`-mscrtlib=msvcrt`, with the Windows SDK's
+  // libraries on the library path, as when cross-linking from another host)
+  // needs its vcruntime as with Visual C++.
+  if (useInternalToolchain && mscrtlibName.contains_insensitive("vcruntime"))
     return;
-  }
 
   const bool isStatic = mscrtlibName.contains_insensitive("libcmt");
 
