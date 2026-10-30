@@ -73,7 +73,35 @@ extern (C++) struct CTFloat
             assert(0);
     }
 
-    static if (!is(real_t == real))
+    version (LDC_real_apfloat)
+    {
+        // implemented in gen/ctfloat.cpp
+      pure:
+        static real_t sin(real_t x);
+        static real_t cos(real_t x);
+        static real_t tan(real_t x);
+        static real_t sqrt(real_t x);
+        static real_t fabs(real_t x);
+        static real_t ldexp(real_t n, int exp);
+
+        static real_t round(real_t x);
+        static real_t floor(real_t x);
+        static real_t ceil(real_t x);
+        static real_t trunc(real_t x);
+        static real_t log(real_t x);
+        static real_t log2(real_t x);
+        static real_t log10(real_t x);
+        static real_t pow(real_t x, real_t y);
+        static real_t exp(real_t x);
+        static real_t expm1(real_t x);
+        static real_t exp2(real_t x);
+        static real_t copysign(real_t x, real_t s);
+
+        /// Whether the host's `long double` holds the target's `real`, so that
+        /// the host's math library computes it to full precision.
+        static bool hostMathHasRealPrecision();
+    }
+    else static if (!is(real_t == real))
     {
         static import dmd.root.longdouble;
         alias sin = dmd.root.longdouble.sinl;
@@ -93,7 +121,8 @@ extern (C++) struct CTFloat
         pure static real_t ldexp(real_t n, int exp) { return core.math.ldexp(n, exp); }
     }
 
-    static if (!is(real_t == real))
+    version (LDC_real_apfloat) {}
+    else static if (!is(real_t == real))
     {
         static real_t round(real_t x) { return real_t(cast(double)core.stdc.math.roundl(cast(double)x)); }
         static real_t floor(real_t x) { return real_t(cast(double)core.stdc.math.floor(cast(double)x)); }
@@ -136,7 +165,17 @@ extern (C++) struct CTFloat
   {
     static import std.math;
 
-    static if (!is(real_t == real))
+    version (LDC_real_apfloat)
+    {
+        // implemented in gen/ctfloat.cpp
+      pure:
+        static real_t rint(real_t x);
+        static real_t nearbyint(real_t x);
+        // exact: the operand is integral
+        static int64_t llround(real_t x) { return cast(int64_t) round(x); }
+        static int64_t llrint(real_t x) { return cast(int64_t) rint(x); }
+    }
+    else static if (!is(real_t == real))
     {
         static real_t rint(real_t x) { return real_t(cast(double)std.math.rint(cast(double)x)); }
         static real_t nearbyint(real_t x) { return real_t(cast(double)std.math.nearbyint(cast(double)x)); }
@@ -159,7 +198,10 @@ extern (C++) struct CTFloat
     static bool isIdentical(real_t a, real_t b)
     {
         // don't compare pad bytes in extended precision
-        enum sz = (real_t.mant_dig == 64) ? 10 : real_t.sizeof;
+        version (LDC_real_apfloat)
+            enum sz = real_t.sizeof; // canonical quadruple bits, no padding
+        else
+            enum sz = (real_t.mant_dig == 64) ? 10 : real_t.sizeof;
         return memcmp(&a, &b, sz) == 0;
     }
 
@@ -170,7 +212,10 @@ extern (C++) struct CTFloat
 
         if (isNaN(a))
             a = real_t.nan;
-        enum sz = (real_t.mant_dig == 64) ? 10 : real_t.sizeof;
+        version (LDC_real_apfloat)
+            enum sz = real_t.sizeof; // canonical quadruple bits, no padding
+        else
+            enum sz = (real_t.mant_dig == 64) ? 10 : real_t.sizeof;
         return calcHash((cast(ubyte*) &a)[0 .. sz]);
     }
 

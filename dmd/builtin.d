@@ -169,6 +169,20 @@ version (IN_LLVM)
     if (id3 == Id._sqrt) return BUILTIN.sqrt;
     if (id3 == Id.fabs)  return BUILTIN.fabs;
 
+version (LDC_real_apfloat)
+{
+    // A `real` wider than the host's `long double` (a quadruple on an x87 or
+    // macOS host) would be folded with the host's math library, at its
+    // precision. Phobos implements these in D for such a `real`; CTFE runs that
+    // instead, in the target's format.
+    auto tf = fd.type ? fd.type.isTypeFunction() : null;
+    if (!CTFloat.hostMathHasRealPrecision() && tf && tf.parameterList.length &&
+        tf.parameterList[0].type.ty == Tfloat80 &&
+        (id3 == Id.exp || id3 == Id.expm1 || id3 == Id.exp2 ||
+         id3 == Id.log || id3 == Id.log2 || id3 == Id.log10 || id3 == Id._pow))
+        return BUILTIN.unimp;
+}
+
     if (id3 == Id.exp)    return BUILTIN.exp;
     if (id3 == Id.expm1)  return BUILTIN.expm1;
     if (id3 == Id.exp2)   return BUILTIN.exp2;

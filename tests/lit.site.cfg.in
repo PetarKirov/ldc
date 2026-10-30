@@ -32,6 +32,7 @@ config.with_PGO            = True
 config.dynamic_compile     = @LDC_DYNAMIC_COMPILE@
 config.plugins_supported   = @LDC_ENABLE_PLUGINS@
 config.with_mlir           = "@LDC_WITH_MLIR@" == "ON"
+config.real_apfloat        = "@LDC_REAL_APFLOAT@" == "ON"
 config.gnu_make_bin        = "@GNU_MAKE_BIN@"
 config.ldc_host_arch       = "@LLVM_NATIVE_ARCH@"
 config.ldc_with_lld        = @LDC_WITH_LLD@
@@ -135,6 +136,9 @@ if config.ldc_with_lld:
 
 if config.with_mlir:
         config.available_features.add('MLIR')
+
+if config.real_apfloat:
+    config.available_features.add('real_apfloat')
 
 config.target_triple = '(unused)'
 

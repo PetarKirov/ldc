@@ -157,6 +157,10 @@ void Target::_init(const Param &params) {
 
   ptrsize = gDataLayout->getPointerSize();
   realType = getRealType(triple);
+#if defined(LDC_real_apfloat)
+  // Fold `real` in the target's format (dmd/root/longdouble.h).
+  CTFloat::setTargetSemantics(realType->getFltSemantics());
+#endif
   realsize = gDataLayout->getTypeAllocSize(realType);
   realpad = realsize - gDataLayout->getTypeStoreSize(realType);
   realalignsize = gDataLayout->getABITypeAlign(realType).value();
