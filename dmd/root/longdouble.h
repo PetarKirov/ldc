@@ -11,13 +11,123 @@
 
 #pragma once
 
-#if defined(LDC_real_softfloat)
+#if defined(LDC_real_apfloat)
+
+// LDC: the front-end's compile-time `real`, in the target's `real` format on
+// any host. Arithmetic is done by llvm::APFloat in gen/ctfloat.cpp, so a
+// compiler running on x86 (80-bit `long double`) or on macOS (64-bit
+// `long double`) folds a quadruple-precision target's `real` exactly.
+//
+// The value is held as the bits of an IEEE quadruple: it holds every value of
+// the double, x87 and quadruple formats exactly, so the default value (a
+// quiet NaN, as for D's `real.init`) and identity do not depend on the target.
+
+#include <stddef.h>
+#include <stdint.h>
+
+// The C++ types D's `long` and `ulong` mangle as (dmd/mangle/cpp.d).
+#if defined(_WIN32)
+typedef long long ld_ap_int64;
+typedef unsigned long long ld_ap_uint64;
+#else
+typedef long ld_ap_int64;
+typedef unsigned long ld_ap_uint64;
+#endif
+
+struct longdouble_ap;
+
+// implemented in gen/ctfloat.cpp
+longdouble_ap ld_ap_from_int64(ld_ap_int64 v);
+longdouble_ap ld_ap_from_uint64(ld_ap_uint64 v);
+longdouble_ap ld_ap_from_float(float v);
+longdouble_ap ld_ap_from_double(double v);
+longdouble_ap ld_ap_from_host(long double v);
+float ld_ap_to_float(longdouble_ap x);
+double ld_ap_to_double(longdouble_ap x);
+long double ld_ap_to_host(longdouble_ap x);
+ld_ap_int64 ld_ap_to_int64(longdouble_ap x);
+ld_ap_uint64 ld_ap_to_uint64(longdouble_ap x);
+longdouble_ap ld_ap_add(longdouble_ap x, longdouble_ap y);
+longdouble_ap ld_ap_sub(longdouble_ap x, longdouble_ap y);
+longdouble_ap ld_ap_mul(longdouble_ap x, longdouble_ap y);
+longdouble_ap ld_ap_div(longdouble_ap x, longdouble_ap y);
+longdouble_ap ld_ap_mod(longdouble_ap x, longdouble_ap y);
+// -1, 0 or 1, and 2 if either operand is a NaN
+int ld_ap_cmp(longdouble_ap x, longdouble_ap y);
+
+struct longdouble_ap
+{
+    // IEEE quadruple bits, least significant word first
+    uint64_t bits[2];
+
+    longdouble_ap() : bits{0, 0x7FFF800000000000ULL} {}
+
+    longdouble_ap(float v) { *this = ld_ap_from_float(v); }
+    longdouble_ap(double v) { *this = ld_ap_from_double(v); }
+    longdouble_ap(long double v) { *this = ld_ap_from_host(v); }
+
+    longdouble_ap(signed char v) { *this = ld_ap_from_int64(v); }
+    longdouble_ap(short v) { *this = ld_ap_from_int64(v); }
+    longdouble_ap(int v) { *this = ld_ap_from_int64(v); }
+    longdouble_ap(long v) { *this = ld_ap_from_int64(v); }
+    longdouble_ap(long long v) { *this = ld_ap_from_int64(v); }
+
+    longdouble_ap(unsigned char v) { *this = ld_ap_from_uint64(v); }
+    longdouble_ap(unsigned short v) { *this = ld_ap_from_uint64(v); }
+    longdouble_ap(unsigned int v) { *this = ld_ap_from_uint64(v); }
+    longdouble_ap(unsigned long v) { *this = ld_ap_from_uint64(v); }
+    longdouble_ap(unsigned long long v) { *this = ld_ap_from_uint64(v); }
+    longdouble_ap(bool v) { *this = ld_ap_from_uint64(v); }
+
+    // non-zero, or a NaN
+    explicit operator bool() const { return ld_ap_cmp(*this, longdouble_ap(0)) != 0; }
+    explicit operator float() const { return ld_ap_to_float(*this); }
+    explicit operator double() const { return ld_ap_to_double(*this); }
+    explicit operator long double() const { return ld_ap_to_host(*this); }
+
+    explicit operator int() const { return (int)ld_ap_to_int64(*this); }
+    explicit operator long() const { return (long)ld_ap_to_int64(*this); }
+    explicit operator long long() const { return ld_ap_to_int64(*this); }
+    explicit operator unsigned() const { return (unsigned)ld_ap_to_uint64(*this); }
+    explicit operator unsigned long() const { return (unsigned long)ld_ap_to_uint64(*this); }
+    explicit operator unsigned long long() const { return ld_ap_to_uint64(*this); }
+};
+
+template<typename T> inline longdouble_ap ldouble(T x) { return longdouble_ap(x); }
+
+inline longdouble_ap operator+(longdouble_ap x, longdouble_ap y) { return ld_ap_add(x, y); }
+inline longdouble_ap operator-(longdouble_ap x, longdouble_ap y) { return ld_ap_sub(x, y); }
+inline longdouble_ap operator*(longdouble_ap x, longdouble_ap y) { return ld_ap_mul(x, y); }
+inline longdouble_ap operator/(longdouble_ap x, longdouble_ap y) { return ld_ap_div(x, y); }
+
+inline longdouble_ap operator-(longdouble_ap x) { x.bits[1] ^= 0x8000000000000000ULL; return x; }
+inline longdouble_ap operator+(longdouble_ap x) { return x; }
+
+inline bool operator< (longdouble_ap x, longdouble_ap y) { return ld_ap_cmp(x, y) == -1; }
+inline bool operator<=(longdouble_ap x, longdouble_ap y) { const int c = ld_ap_cmp(x, y); return c == -1 || c == 0; }
+inline bool operator> (longdouble_ap x, longdouble_ap y) { return ld_ap_cmp(x, y) == 1; }
+inline bool operator>=(longdouble_ap x, longdouble_ap y) { const int c = ld_ap_cmp(x, y); return c == 1 || c == 0; }
+inline bool operator==(longdouble_ap x, longdouble_ap y) { return ld_ap_cmp(x, y) == 0; }
+inline bool operator!=(longdouble_ap x, longdouble_ap y) { return ld_ap_cmp(x, y) != 0; }
+
+inline longdouble_ap& operator+=(longdouble_ap& x, longdouble_ap y) { return x = x + y; }
+inline longdouble_ap& operator-=(longdouble_ap& x, longdouble_ap y) { return x = x - y; }
+inline longdouble_ap& operator*=(longdouble_ap& x, longdouble_ap y) { return x = x * y; }
+inline longdouble_ap& operator/=(longdouble_ap& x, longdouble_ap y) { return x = x / y; }
+
+typedef longdouble_ap longdouble;
+typedef longdouble_ap volatile_longdouble;
+#define USE_LONGDOUBLE_APFLOAT 1
+
+#elif defined(LDC_real_softfloat)
 #define USE_LONGDOUBLE_SOFTFLOAT 1
 #elif defined(_MSC_VER)
 #define USE_LONGDOUBLE_SOFTFLOAT 1
 #endif
 
-#if !USE_LONGDOUBLE_SOFTFLOAT // has native 10 byte doubles
+#if USE_LONGDOUBLE_APFLOAT
+// longdouble_ap above
+#elif !USE_LONGDOUBLE_SOFTFLOAT // has native 10 byte doubles
 #include <stdio.h>
 typedef long double longdouble;
 typedef volatile long double volatile_longdouble;

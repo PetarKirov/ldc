@@ -106,6 +106,7 @@ set(PHOBOS_SYSTEM_ZLIB OFF CACHE BOOL "Use system zlib instead of Phobos' vendor
 
 # Force use of softfloat for compiler
 option(LDC_FORCE_SOFTFLOAT_REAL "Force LDC to be built with 80-bit real in software" OFF)
+option(LDC_REAL_APFLOAT "Compute the front-end's compile-time real with llvm::APFloat, in the target's format" OFF)
 
 if(D_VERSION EQUAL 1)
     message(FATAL_ERROR "D version 1 is no longer supported.
@@ -175,6 +176,15 @@ if(MSVC)
             string(REGEX REPLACE "/Ob[0-2]" "${llvm_ob_flag}" ${flag_var} "${${flag_var}}")
         endif()
     endforeach()
+endif()
+
+# Compile-time `real` in the target's format on any host, by llvm::APFloat
+# (dmd/root/longdouble.h): a host whose `real` is narrower than the target's
+# (x87 or macOS for a quadruple-precision target) folds it exactly.
+if (LDC_REAL_APFLOAT)
+    append("-version=LDC_real_apfloat" DFLAGS_LDC)
+    # every C++ source, not only LDC_CXXFLAGS' (reset below): real_t is shared
+    add_definitions(-DLDC_real_apfloat)
 endif()
 
 if (LDC_FORCE_SOFTFLOAT_REAL)

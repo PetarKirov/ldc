@@ -16,7 +16,7 @@
 typedef longdouble real_t;
 
 #if IN_LLVM
-namespace llvm { class APFloat; }
+namespace llvm { class APFloat; struct fltSemantics; }
 #endif
 
 // Compile-time floating-point helper
@@ -59,6 +59,11 @@ struct CTFloat
     // implemented in gen/ctfloat.cpp
     static void toAPFloat(real_t src, llvm::APFloat &dst);
     static real_t fromAPFloat(const llvm::APFloat &src);
+#if defined(LDC_real_apfloat)
+    // Folds `real` in the target's format from now on (Target::_init).
+    static void setTargetSemantics(const llvm::fltSemantics &semantics);
+    static bool hostMathHasRealPrecision();
+#endif
 
     static bool isFloat32LiteralOutOfRange(const char *literal);
     static bool isFloat64LiteralOutOfRange(const char *literal);

@@ -11,7 +11,11 @@
 
 module dmd.root.longdouble;
 
-version (LDC_real_softfloat)
+version (LDC_real_apfloat)
+{
+    alias longdouble = longdouble_ap;
+}
+else version (LDC_real_softfloat)
 {
     version = EnableSoftfloat;
     alias longdouble = longdouble_soft;
@@ -28,6 +32,155 @@ else version (CRuntime_Microsoft)
 }
 else
     alias longdouble = real;
+
+version (LDC_real_apfloat)
+{
+/**
+ * LDC: the front-end's compile-time `real` in the target's `real` format,
+ * on any host. Arithmetic is done by `llvm::APFloat` (gen/ctfloat.cpp), so a
+ * compiler running on x86 (80-bit `real`) or on macOS (64-bit `real`) folds
+ * a quadruple-precision target's `real` exactly. See dmd/root/longdouble.h.
+ *
+ * The value is held as the bits of an IEEE quadruple, which holds every value
+ * of the double, x87 and quadruple formats exactly; `init` is a quiet NaN, as
+ * for `real.init`.
+ */
+extern (C++) struct longdouble_ap
+{
+nothrow @nogc pure @safe:
+    // IEEE quadruple bits, least significant word first
+    ulong[2] bits = [0, 0x7FFF_8000_0000_0000];
+
+    this(longdouble_ap v) { bits = v.bits; }
+    this(int v)    { this = ld_ap_from_int64(v); }
+    this(uint v)   { this = ld_ap_from_uint64(v); }
+    this(long v)   { this = ld_ap_from_int64(v); }
+    this(ulong v)  { this = ld_ap_from_uint64(v); }
+    this(float v)  { this = ld_ap_from_float(v); }
+    this(double v) { this = ld_ap_from_double(v); }
+    this(real v)   { this = ld_ap_from_host(v); }
+
+  extern (D):
+    ref longdouble_ap opAssign(longdouble_ap rhs) return { bits = rhs.bits; return this; }
+    ref longdouble_ap opAssign(T)(T rhs) { this = longdouble_ap(rhs); return this; }
+
+    longdouble_ap opUnary(string op)() const
+    {
+        static if (op == "-")
+        {
+            longdouble_ap r = this;
+            r.bits[1] ^= 0x8000_0000_0000_0000;
+            return r;
+        }
+        else static if (op == "+")
+            return this;
+        else
+            static assert(false, "Operator `" ~ op ~ "` is not implemented");
+    }
+
+    bool opEquals(T)(T rhs) const { return ld_ap_cmp(this, longdouble_ap(rhs)) == 0; }
+
+    // NaN when unordered, so that every comparison with a NaN is false
+    float opCmp(T)(T rhs) const
+    {
+        const c = ld_ap_cmp(this, longdouble_ap(rhs));
+        return c == 2 ? float.nan : c;
+    }
+
+    longdouble_ap opBinary(string op, T)(T rhs) const
+    {
+        return apply!op(this, longdouble_ap(rhs));
+    }
+
+    longdouble_ap opBinaryRight(string op, T)(T lhs) const
+    {
+        return apply!op(longdouble_ap(lhs), this);
+    }
+
+    ref longdouble_ap opOpAssign(string op, T)(T rhs)
+    {
+        this = apply!op(this, longdouble_ap(rhs));
+        return this;
+    }
+
+    T opCast(T)() const
+    {
+        static if (is(T == bool))
+            return ld_ap_cmp(this, longdouble_ap(0)) != 0;
+        else static if (is(T == float))
+            return ld_ap_to_float(this);
+        else static if (is(T == double))
+            return ld_ap_to_double(this);
+        else static if (is(T == real))
+            return ld_ap_to_host(this);
+        else static if (is(T == ulong))
+            return ld_ap_to_uint64(this);
+        else static if (is(T == long))
+            return ld_ap_to_int64(this);
+        else static if (__traits(isIntegral, T) && __traits(isUnsigned, T))
+            return cast(T) ld_ap_to_uint64(this);
+        else static if (__traits(isIntegral, T))
+            return cast(T) ld_ap_to_int64(this);
+        else
+            static assert(false, "unsupported type");
+    }
+
+    static longdouble_ap nan() { return longdouble_ap.init; }
+    static longdouble_ap infinity() { return fromBits(0, 0x7FFF_0000_0000_0000); }
+
+    // The quadruple's properties, for `Target.RealProperties` until
+    // gen/target.cpp sets the target's.
+    static longdouble_ap max() { return fromBits(ulong.max, 0x7FFE_FFFF_FFFF_FFFF); }
+    static longdouble_ap min_normal() { return fromBits(0, 0x0001_0000_0000_0000); }
+    static longdouble_ap epsilon() { return fromBits(0, 0x3F8F_0000_0000_0000); }
+    enum dig = 33;
+    enum mant_dig = 113;
+    enum max_exp = 16_384;
+    enum min_exp = -16_381;
+    enum max_10_exp = 4932;
+    enum min_10_exp = -4931;
+
+  private:
+    static longdouble_ap fromBits(ulong low, ulong high)
+    {
+        longdouble_ap r;
+        r.bits = [low, high];
+        return r;
+    }
+
+    static longdouble_ap apply(string op)(longdouble_ap x, longdouble_ap y)
+    {
+        static if      (op == "+") return ld_ap_add(x, y);
+        else static if (op == "-") return ld_ap_sub(x, y);
+        else static if (op == "*") return ld_ap_mul(x, y);
+        else static if (op == "/") return ld_ap_div(x, y);
+        else static if (op == "%") return ld_ap_mod(x, y);
+        else static assert(false, "Operator `" ~ op ~ "` is not implemented");
+    }
+}
+
+// implemented in gen/ctfloat.cpp
+extern (C++) nothrow @nogc pure @trusted
+{
+    longdouble_ap ld_ap_from_int64(long v);
+    longdouble_ap ld_ap_from_uint64(ulong v);
+    longdouble_ap ld_ap_from_float(float v);
+    longdouble_ap ld_ap_from_double(double v);
+    longdouble_ap ld_ap_from_host(real v);
+    float ld_ap_to_float(longdouble_ap x);
+    double ld_ap_to_double(longdouble_ap x);
+    real ld_ap_to_host(longdouble_ap x);
+    long ld_ap_to_int64(longdouble_ap x);
+    ulong ld_ap_to_uint64(longdouble_ap x);
+    longdouble_ap ld_ap_add(longdouble_ap x, longdouble_ap y);
+    longdouble_ap ld_ap_sub(longdouble_ap x, longdouble_ap y);
+    longdouble_ap ld_ap_mul(longdouble_ap x, longdouble_ap y);
+    longdouble_ap ld_ap_div(longdouble_ap x, longdouble_ap y);
+    longdouble_ap ld_ap_mod(longdouble_ap x, longdouble_ap y);
+    /// -1, 0 or 1, and 2 if either operand is a NaN
+    int ld_ap_cmp(longdouble_ap x, longdouble_ap y);
+}
+}
 
 // longdouble_soft needed when building the backend with
 // Visual C or the frontend with LDC on Windows
