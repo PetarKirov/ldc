@@ -249,6 +249,8 @@ int processCallstack(Location[] locations, const(ubyte)[] debugLineSectionData,
         resolveAddresses(debugLineSectionData, locations, baseAddress);
     version (Darwin)
     {
+        // No .dSYM beside the executable: ask atos, which reads the DWARF
+        // the debug map in the executable points at.
         if (!debugLineSectionData)
             resolveAddressesWithAtos(locations);
     }
