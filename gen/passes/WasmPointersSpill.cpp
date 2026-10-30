@@ -129,7 +129,9 @@ bool WasmPointersSpill::run(Function &F) {
     SmallPtrSet<Instruction *, 0> WorklistSeen;
     SmallVector<Instruction *> Worklist;
 
-    DenseMap<AllocaInst *, SmallPtrSet<Value *, 0>> ValuesStoredInAlloca;
+    // Insertion-ordered: the values are marked in this order, which orders
+    // `PotentialPointers` and so the spill slots.
+    DenseMap<AllocaInst *, SmallSetVector<Value *, 4>> ValuesStoredInAlloca;
 
     for (auto &BB : F) {
       for (Instruction &I : BB) {
@@ -471,7 +473,8 @@ bool WasmPointersSpill::run(Function &F) {
         // Hopefully optimizations during codegen will dissolve the empty BB
         // after the lifetime.end is lowered away.
 
-        SmallPtrSet<BasicBlock *, 4> EdgesToKillOn;
+        // Insertion-ordered: the edges are split in this order.
+        SmallSetVector<BasicBlock *, 4> EdgesToKillOn;
 
         for (BasicBlock *Succ : successors(&BB)) {
           if (NewBlocks.contains(Succ))
