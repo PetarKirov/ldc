@@ -370,7 +370,13 @@ extern(C) void _d_throw_exception(Throwable o)
             auto r = _Unwind_RaiseException(&eh.exception_object);
         }
 
-        /* Shouldn't have returned, but if it did:
+        /* Shouldn't have returned, but if it did, nothing caught the
+         * exception, and it is reported whatever the reason code, as C++'s
+         * __cxa_throw reports it before calling terminate(). The code itself
+         * cannot be trusted: on AArch64, the epilogue of libgcc's
+         * _Unwind_RaiseException can reload its argument over the code it
+         * returns (GCC PR114843; gcc 16.2's libgcc_s still does), so a
+         * stack without a handler looks like an unknown error.
          */
         switch (r)
         {
@@ -383,36 +389,41 @@ extern(C) void _d_throw_exception(Throwable o)
                  */
                 fprintf(cast()stderr, "%s:%d: uncaught exception reached top of stack\n", __FILE__.ptr, __LINE__);
                 fprintf(cast()stderr, "This might happen if you're missing a top level catch in your fiber or signal handler\n");
-                /**
-                As _d_print_throwable() itself may throw multiple times when calling core.demangle,
-                and with the uncaught exception still on the EH stack, this doesn't bode well with core.demangle's error recovery.
-                */
-                version (LDC)
-                    _d_eh_enter_catch(&eh.exception_object);
-                else
-                    __dmd_begin_catch(&eh.exception_object);
-                _d_print_throwable(o);
-                abort();
-                assert(0);
+                break;
 
             case _URC_FATAL_PHASE1_ERROR:
                 /* Unexpected error, likely some sort of corruption.
-                * In C++, terminate() would be called.
-                */
-                terminate(__LINE__);                          // should never happen
-                assert(0);
+                 */
+                fprintf(cast()stderr, "%s:%d: uncaught exception: unwinding failed to find a handler\n", __FILE__.ptr, __LINE__);
+                break;
 
             case _URC_FATAL_PHASE2_ERROR:
                 /* Unexpected error. Program is in an unknown state.
-                * In C++, terminate() would be called.
-                */
-                terminate(__LINE__);                          // should never happen
-                assert(0);
+                 */
+                fprintf(cast()stderr, "%s:%d: uncaught exception: unwinding failed\n", __FILE__.ptr, __LINE__);
+                break;
 
             default:
-                terminate(__LINE__);                          // should never happen
-                assert(0);
+                /* Not a reason code: the libgcc defect above, which returns
+                 * the exception object's address when the search reached
+                 * the top of the stack (or failed).
+                 */
+                fprintf(cast()stderr, "%s:%d: uncaught exception reached top of stack (the unwinder returned %d, not a reason code)\n",
+                    __FILE__.ptr, __LINE__, cast(int) r);
+                fprintf(cast()stderr, "This might happen if you're missing a top level catch in your fiber or signal handler\n");
+                break;
         }
+        /**
+        As _d_print_throwable() itself may throw multiple times when calling core.demangle,
+        and with the uncaught exception still on the EH stack, this doesn't bode well with core.demangle's error recovery.
+        */
+        version (LDC)
+            _d_eh_enter_catch(&eh.exception_object);
+        else
+            __dmd_begin_catch(&eh.exception_object);
+        _d_print_throwable(o);
+        abort();
+        assert(0);
     }
 }
 
@@ -1334,7 +1345,8 @@ enum LsdaResult
 
 void terminate(uint line) @nogc
 {
-    printf("dwarfeh(%u) fatal error\n", line);
+    // stderr: abort() discards whatever a redirected stdout still buffers.
+    fprintf(cast()stderr, "dwarfeh(%u) fatal error\n", line);
     abort();     // unceremoniously exit
 }
 

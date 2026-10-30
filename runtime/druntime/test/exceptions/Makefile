@@ -29,10 +29,6 @@ ifeq ($(OS),linux)
     endif
     ifdef IN_LDC
         ifeq ($(ARCH),aarch64)
-            # FIXME: unclear why this fails on AArch64 - the only stderr output is 'Aborted'
-            TESTS := $(filter-out rt_trap_exceptions,$(TESTS))
-            # ditto
-            TESTS := $(filter-out memoryerror_null_call,$(TESTS))
             # these fail for CI (GitHub Actions at least), but work locally on Raspberry Pi 5 with Debian 13
             TESTS := $(filter-out memoryerror_null_read,$(TESTS))
             TESTS := $(filter-out memoryerror_null_write,$(TESTS))
