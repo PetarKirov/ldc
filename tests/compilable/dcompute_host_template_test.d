@@ -1,3 +1,5 @@
+// REQUIRES: target_NVPTX
+
 // RUN: %ldc -c -mdcompute-targets=cuda-350 -I%S %s
 // RUN: not %ldc -o- -mdcompute-targets=cuda-350 -verrors=0 -I%S -d-version=Fail %s 2>&1 | FileCheck %s --check-prefix=FAIL
 
