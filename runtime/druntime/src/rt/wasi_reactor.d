@@ -8,6 +8,12 @@
  * and runs the module constructors. A command never links it: its `main`
  * starts the runtime.
  *
+ * On WASI preview 2 and 3 a reactor becomes a library component, whose
+ * exports come from a WIT world (`-L--component-type=world.wit`). Component
+ * hosts never call `_initialize`; instead the componentizer (wit-component,
+ * run by `wasm-component-ld`) gives the component a start function that calls
+ * it once, at instantiation, before any export can run.
+ *
  * License: $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
  * Source: $(DRUNTIMESRC rt/_wasi_reactor.d)
  */
