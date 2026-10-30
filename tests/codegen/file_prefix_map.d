@@ -1,5 +1,6 @@
 // -fmacro-prefix-map rewrites the file names a program sees: `__FILE__`,
-// `__FILE_FULL_PATH__`, and those passed to the runtime's error functions.
+// `__FILE_FULL_PATH__`, `__traits(getLocation)`, and those passed to the
+// runtime's error functions, a `final switch` with no matching case included.
 // -ffile-prefix-map also rewrites the debug info's.
 
 // RUN: %ldc -fmacro-prefix-map=%S=/src -output-ll -of=%t.macro.ll %s
@@ -28,3 +29,15 @@ string file() { return __FILE__; }
 string fullPath() { return __FILE_FULL_PATH__; }
 
 void outOfBounds(int[] a, size_t i) { a[i] = 0; }
+
+enum Colour { red, green }
+int hue(Colour c)
+{
+    final switch (c)
+    {
+        case Colour.red: return 0;
+        case Colour.green: return 120;
+    }
+}
+
+string declaredIn() { return __traits(getLocation, hue)[0]; }

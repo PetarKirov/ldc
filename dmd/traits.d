@@ -2145,7 +2145,13 @@ version (IN_LLVM)
         }
 
         auto exps = new Expressions(3);
-        (*exps)[0] = new StringExp(e.loc, s.loc.filename.toDString());
+        const(char)* file = s.loc.filename;
+        version (IN_LLVM)
+        {
+            import gen.llvmhelpers : DtoRemapFilePath;
+            file = DtoRemapFilePath(file);
+        }
+        (*exps)[0] = new StringExp(e.loc, file.toDString());
         (*exps)[1] = new IntegerExp(e.loc, s.loc.linnum,Type.tint32);
         (*exps)[2] = new IntegerExp(e.loc, s.loc.charnum,Type.tint32);
         auto tup = new TupleExp(e.loc, exps);

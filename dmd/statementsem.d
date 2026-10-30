@@ -2056,7 +2056,13 @@ version (IN_LLVM)
                     sl = new DotIdExp(ss.loc, sl, Id.__switch_error);
 
                     Expressions* args = new Expressions(2);
-                    (*args)[0] = new StringExp(ss.loc, ss.loc.filename.toDString());
+                    const(char)* file = ss.loc.filename;
+                    version (IN_LLVM)
+                    {
+                        import gen.llvmhelpers : DtoRemapFilePath;
+                        file = DtoRemapFilePath(file);
+                    }
+                    (*args)[0] = new StringExp(ss.loc, file.toDString());
                     (*args)[1] = new IntegerExp(ss.loc.linnum);
 
                     sl = new CallExp(ss.loc, sl, args);
