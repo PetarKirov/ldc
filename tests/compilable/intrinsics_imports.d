@@ -1,7 +1,9 @@
 // Very basic test to check that instrinsics include file is made correctly.
 // Related to https://github.com/ldc-developers/ldc/issues/4347
 
-// Just do SemA, no codegen, such that it works on all CI systems.
+// Just do SemA, no codegen, such that it works on all CI systems. The
+// gccbuiltins modules exist for the targets LLVM was built with.
+// REQUIRES: target_AArch64, target_ARM, target_Mips, target_NVPTX, target_PowerPC, target_X86
 // RUN: %ldc -o- %s
 
 import core.simd;
