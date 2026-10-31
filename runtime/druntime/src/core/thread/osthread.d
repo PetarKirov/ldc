@@ -3454,6 +3454,20 @@ ThreadID createLowLevelThread(void delegate() nothrow dg, uint stacksize = 0,
             return ThreadID.init;
     }
 
+    version (Posix)
+    {
+        // Create the thread with `slock` held, as `Thread.start` does, so that
+        // no collection stops the world while `pthread_create` runs. A
+        // `pthread_create` may run with every signal blocked (AddressSanitizer's
+        // interceptor blocks them across the whole call) and wait inside it for
+        // a lock of the C library (the thread stack cache, the TLS lock) that a
+        // suspended thread holds: it would then never acknowledge the suspend
+        // signal, and the collection would wait for it forever. Nothing takes
+        // `slock` while it holds `lowlevelLock`, so it is taken first.
+        Thread.slock.lock_nothrow();
+        scope(exit) Thread.slock.unlock_nothrow();
+    }
+
     lowlevelLock.lock_nothrow();
     scope(exit) lowlevelLock.unlock_nothrow();
 
