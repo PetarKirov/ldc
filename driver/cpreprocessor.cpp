@@ -162,8 +162,14 @@ FileName runCPreprocessor(FileName csrcfile, Loc loc, OutBuffer &defines) {
 
   args.push_back(isMSVC ? "/std:c11" : "-std=c11");
 
-  if (!isMSVC)
+  if (!isMSVC) {
     appendTargetArgsForGcc(args);
+
+    // map `__FILE__` in C code as in D code; gcc and clang take the maps in
+    // the same order, the last matching one winning
+    for (const auto &[from, to] : opts::macroPrefixMap)
+      args.push_back("-fmacro-prefix-map=" + from + "=" + to);
+  }
 
   if (triple.isOSDarwin())
     args.push_back("-fno-blocks"); // disable blocks extension
