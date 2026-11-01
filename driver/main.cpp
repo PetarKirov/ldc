@@ -396,6 +396,8 @@ void parseCommandLine(Strings &sourceFiles) {
   if (!makeDepsAbsent.empty()) {
     global.params.makeDepsAbsent.doOutput = true;
     global.params.makeDepsAbsent.name = opts::dupPathString(makeDepsAbsent);
+    for (const auto &path : ConfigFile::absentCandidates())
+      addAbsentDep(path.c_str());
   }
 
   global.params.timeTraceFile = fTimeTraceFile.c_str();

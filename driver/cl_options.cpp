@@ -495,8 +495,9 @@ cl::opt<std::string>
 cl::opt<std::string> makeDepsAbsent(
     "makedeps-absent", cl::ZeroOrMore, cl::value_desc("filename"),
     cl::desc("Write the absent candidates of the module dependencies in "
-             "Makefile compatible format to <filename>: the paths the import "
-             "and string import searches probed and found missing"));
+             "Makefile compatible format to <filename>: the paths the "
+             "import, string import and config file searches probed and "
+             "found missing"));
 
 cl::opt<bool> m32bits("m32", cl::desc("32 bit target"), cl::ZeroOrMore);
 

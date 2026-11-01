@@ -17,6 +17,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include <string>
+#include <vector>
 
 struct ConfigFile {
 public:
@@ -35,6 +36,11 @@ public:
   llvm::StringRef rpath() const {
     return rpathcstr ? llvm::StringRef(rpathcstr) : llvm::StringRef();
   }
+
+  // The paths the automatic lookup found missing before the config file it
+  // read (all of them if none was found), in lookup order. Static, as the
+  // struct's layout is shared with D (driver/configfile.d).
+  static const std::vector<std::string> &absentCandidates();
 
 private:
   bool locate(std::string &pathstr);

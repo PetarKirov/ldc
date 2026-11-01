@@ -88,6 +88,12 @@ static bool ReadPathFromRegistry(llvm::SmallString<128> &p) {
 }
 #endif
 
+static std::vector<std::string> absentCandidatesStorage;
+
+const std::vector<std::string> &ConfigFile::absentCandidates() {
+  return absentCandidatesStorage;
+}
+
 bool ConfigFile::locate(std::string &pathstr) {
   // temporary configuration
 
@@ -101,11 +107,19 @@ bool ConfigFile::locate(std::string &pathstr) {
       pathstr = {p.data(), p.size()};                                          \
       return true;                                                             \
     }                                                                          \
+    absentCandidatesStorage.emplace_back(p.str());                             \
   }
 
   // try the current working dir
-  if (!sys::fs::current_path(p))
-    APPEND_FILENAME_AND_RETURN_IF_EXISTS
+  if (!sys::fs::current_path(p)) {
+    if (sys::fs::exists(filename)) {
+      sys::path::append(p, filename);
+      pathstr = {p.data(), p.size()};
+      return true;
+    }
+    // relative, as it is relative to the working directory
+    absentCandidatesStorage.emplace_back(filename);
+  }
 
   // try next to the executable
   p = exe_path::getBinDir();

@@ -41,6 +41,15 @@
 // RUN: grep -c "a.opt\.di" %t.absent | FileCheck %s --check-prefix=ONCE
 // ONCE: {{^1$}}
 
+// The automatic lookup of the config file lists its missing candidates first,
+// the one in the working directory as a relative path.
+// RUN: rm -rf %t.dir && mkdir %t.dir && cd %t.dir && \
+// RUN:   %ldc -o- %S/inputs/makedeps_absent/b/m.d --makedeps-absent=%t.conf
+// RUN: FileCheck %s --check-prefix=CONF < %t.conf
+// CONF:      : \
+// CONF-NEXT: {{^  ldc2.conf \\$}}
+// CONF-NEXT: {{^  .+[/\\]ldc2.conf \\$}}
+
 // --makedeps lists only what was read.
 // RESOLVED:     {{^  .*}}b{{/|\\}}m.d \
 // RESOLVED-NOT: opt.
