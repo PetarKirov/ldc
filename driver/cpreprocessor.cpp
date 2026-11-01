@@ -14,12 +14,23 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Target/TargetMachine.h"
 
+// In dmd/deps.d
+void addAbsentDep(const char *path);
+
 namespace {
 const char *getPathToImportc_h(Loc loc) {
   // importc.h should be next to object.d
   static const char *cached = nullptr;
   if (!cached) {
     cached = FileName::searchPath(global.importPaths, "importc.h", false);
+
+    // for -makedeps-absent, the import paths searched before the one with it
+    for (const char *path : global.importPaths) {
+      const char *candidate = FileName::combine(path, "importc.h");
+      if (cached && strcmp(candidate, cached) == 0)
+        break;
+      addAbsentDep(candidate);
+    }
     if (!cached) {
       error(loc, "cannot find \"importc.h\" along import path");
       fatal();
@@ -131,6 +142,14 @@ FileName runCPreprocessor(FileName csrcfile, Loc loc, OutBuffer &defines) {
   // With -makedeps, the preprocessor lists the headers it read in a make rule
   // next to the .i file. Not done for MSVC, whose /showIncludes goes to the
   // console.
+  //
+  // It lists no absent headers: a header created in an include directory
+  // searched ahead of the one a header was found in is missed, as is one
+  // that makes a failing `__has_include` succeed, which names no file the
+  // rule could list. Deriving them from the search order would miss the
+  // latter, the includer's directory of a quoted include, and
+  // `#include_next`, so -makedeps-absent does not claim them; a build that
+  // keys on its output must treat the C include directories as unlisted.
   std::string depFile;
   if (global.params.makeDeps.doOutput && !isMSVC) {
     llvm::SmallString<64> buffer(ipath.toChars());

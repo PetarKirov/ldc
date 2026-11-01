@@ -86,6 +86,9 @@ void gendocfile(Module *m);
 // In dmd/mars.d
 void generateJson(Modules *modules);
 
+// In dmd/deps.d
+void addAbsentDep(const char *path);
+
 using namespace dmd;
 using namespace opts;
 
@@ -388,6 +391,11 @@ void parseCommandLine(Strings &sourceFiles) {
     global.params.makeDeps.doOutput = true;
     if (!makeDeps.empty())
       global.params.makeDeps.name = opts::dupPathString(makeDeps);
+  }
+
+  if (!makeDepsAbsent.empty()) {
+    global.params.makeDepsAbsent.doOutput = true;
+    global.params.makeDepsAbsent.name = opts::dupPathString(makeDepsAbsent);
   }
 
   global.params.timeTraceFile = fTimeTraceFile.c_str();

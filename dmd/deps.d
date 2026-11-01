@@ -22,6 +22,14 @@
  *   source/importb.d
  * ---
  *
+ * With `-makedeps-absent`, a second rule with the same target lists the
+ * absent candidates: each path the import and string-import searches probed
+ * and found missing before the path they resolved to, and every path probed
+ * by a search that failed. Creating a file at one of them can change the
+ * result of the compilation. The paths are listed in probing order, each
+ * once. They do not exist, so the rule is not meant for a makefile. The
+ * C preprocessor's `#include` searches are not covered.
+ *
  * Copyright:   Copyright (C) 1999-2026 by The D Language Foundation, All Rights Reserved
  * License:     $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/compiler/src/dmd/deps.d, makedeps.d)
@@ -41,6 +49,7 @@ import dmd.id : Id;
 import dmd.location : Loc;
 import dmd.root.filename;
 import dmd.root.string : toDString;
+import dmd.root.stringtable : StringTable;
 import dmd.utils : escapePath;
 
 version (IN_LLVM)
@@ -66,6 +75,28 @@ version (IN_LLVM)
  *   libExt = file extension of libraries for current target
  */
 void writeMakeDeps(ref OutBuffer buf, const ref Param params, bool link, bool lib, const(char)[] libExt) pure
+{
+    writeMakeRule(buf, params, params.makeDeps.files[], link, lib, libExt);
+}
+
+/**
+ * Output the absent candidates for the -makedeps-absent switch, as a rule
+ * with the same target as the -makedeps one
+ *
+ * Params:
+ *   buf = outbuffer to write into
+ *   params = dmd params
+ *   link = an executable is being generated
+ *   lib = a library is being generated
+ *   libExt = file extension of libraries for current target
+ */
+void writeMakeDepsAbsent(ref OutBuffer buf, const ref Param params, bool link, bool lib, const(char)[] libExt) pure
+{
+    writeMakeRule(buf, params, params.makeDepsAbsent.files[], link, lib, libExt);
+}
+
+private void writeMakeRule(ref OutBuffer buf, const ref Param params, const(char*)[] files,
+    bool link, bool lib, const(char)[] libExt) pure
 {
     // start by resolving and writing the target (which is sometimes resolved during link phase)
     if (link && (IN_LLVM || params.exefile))
@@ -114,13 +145,71 @@ else
     buf.writestring(":");
 
     // then output every dependency
-    foreach (dep; params.makeDeps.files)
+    foreach (dep; files)
     {
         buf.writestringln(" \\");
         buf.writestring("  ");
         buf.writeEscapedMakePath(dep);
     }
     buf.writenl();
+}
+
+/**
+ * Record a path that a search probed and found missing, for `-makedeps-absent`.
+ * A path already recorded is not recorded again.
+ * Params:
+ *   path = the probed path, as the search combined it
+ */
+extern (C++) void addAbsentDep(const(char)* path) nothrow
+{
+    addAbsentDep(path.toDString);
+}
+
+/// ditto
+extern (D) void addAbsentDep(const(char)[] path) nothrow
+{
+    import dmd.globals : global;
+    import dmd.root.rmem : xarraydup;
+
+    __gshared StringTable!bool recorded;
+    __gshared bool initialized;
+
+    if (!global.params.makeDepsAbsent.doOutput)
+        return;
+    if (!initialized)
+    {
+        recorded._init();
+        initialized = true;
+    }
+    if (recorded.insert(path, true) is null)
+        return; // already recorded
+    global.params.makeDepsAbsent.files.push(path.xarraydup.ptr);
+}
+
+/**
+ * Record, for `-makedeps-absent`, the candidates a string import probed
+ * along the `-J` paths before the one it resolved to
+ * Params:
+ *   name = the file name of the import expression
+ *   resolved = the path it resolved to, or `null` if the search failed
+ */
+void addAbsentStringImportCandidates(const(char)[] name, const(char)[] resolved) nothrow
+{
+    import dmd.globals : global;
+
+    if (!global.params.makeDepsAbsent.doOutput)
+        return;
+    foreach (path; global.filePath[])
+    {
+        const candidate = FileName.combine(path.toDString, name);
+        const isResolved = candidate == resolved;
+        if (!isResolved)
+            addAbsentDep(candidate);
+        if (candidate.ptr != name.ptr && candidate.ptr != resolved.ptr)
+            FileName.free(candidate.ptr);
+        if (isResolved)
+            break;
+    }
 }
 
 /**

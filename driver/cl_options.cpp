@@ -492,6 +492,12 @@ cl::opt<std::string>
              cl::desc("Write module dependencies in Makefile compatible format "
                       "to <filename>/stdout (only imports)"));
 
+cl::opt<std::string> makeDepsAbsent(
+    "makedeps-absent", cl::ZeroOrMore, cl::value_desc("filename"),
+    cl::desc("Write the absent candidates of the module dependencies in "
+             "Makefile compatible format to <filename>: the paths the import "
+             "and string import searches probed and found missing"));
+
 cl::opt<bool> m32bits("m32", cl::desc("32 bit target"), cl::ZeroOrMore);
 
 cl::opt<bool> m64bits("m64", cl::desc("64 bit target"), cl::ZeroOrMore);

@@ -193,6 +193,47 @@ nothrow:
                 FileName.free(ext.ptr);
         }
 
+        /* For `-makedeps-absent`, record the candidates within directory
+         * `path` that precede candidate number `found`, in the order
+         * lookForSourceFileInPath() probes them: mod.di, mod.d,
+         * mod/package.di, mod/package.d, then the ImportC extensions.
+         * Only files are recorded, never directories: a candidate whose
+         * parent directory is missing (which pathExists() finds without
+         * probing the file) stands for that directory too, as creating
+         * the file creates it. So the package files count even when
+         * mod/ is not a directory. `size_t.max` records every candidate.
+         * A null `path` (the working directory) records the relative
+         * candidates.
+         */
+        void recordAbsentCandidates(const char[] path, size_t found)
+        {
+            import dmd.deps : addAbsentDep;
+
+            if (!global.params.makeDepsAbsent.doOutput)
+                return;
+
+            size_t index;
+            void record(const char[] dir, const char[] name)
+            {
+                if (index++ >= found)
+                    return;
+                const candidate = FileName.combine(dir, name);
+                addAbsentDep(candidate);
+                if (candidate.ptr != name.ptr)
+                    FileName.free(candidate.ptr);
+            }
+
+            foreach (ext; extensions)
+                record(path, ext);
+            const n = FileName.combine(path, FileName.sansExt(filename));
+            record(n, package_di);
+            record(n, package_d);
+            if (n.ptr != filename.ptr)
+                FileName.free(n.ptr);
+            foreach (ext; importCextensions)
+                record(path, ext);
+        }
+
         /* Search for all combinations of files (mod.di, mod.d, mod/package.d, ...)
          * within in directory `path`.
          */
@@ -210,15 +251,19 @@ nothrow:
             const p = FileName.combine(path, filename);
             scope(exit) freePath(p);
             if (!pathCache.pathExists(p))
+            {
+                recordAbsentCandidates(path, size_t.max);
                 return null; // no need to check for anything else.
+            }
 
             // Search for any file matching {path}/{file}.{ext}
-            foreach (ext; extensions)
+            foreach (i, ext; extensions)
             {
                 const file = FileName.combine(path, ext);
                 if (FileName.exists(file) == 1)
                 {
                     import dmd.root.rmem : xarraydup;
+                    recordAbsentCandidates(path, i);
                     return checkLocal ? file.xarraydup : file;
                 }
                 freePath(file);
@@ -234,27 +279,35 @@ nothrow:
                  */
                 const ni = FileName.combine(n, package_di);
                 if (FileName.exists(ni) == 1)
+                {
+                    recordAbsentCandidates(path, extensions.length);
                     return ni;
+                }
                 FileName.free(ni.ptr);
 
                 const nd = FileName.combine(n, package_d);
                 if (FileName.exists(nd) == 1)
+                {
+                    recordAbsentCandidates(path, extensions.length + 1);
                     return nd;
+                }
                 FileName.free(nd.ptr);
             }
 
             /* Search for any file with importC extensions after all attempts
                to find a D module/package in the path are exhausted.  */
-            foreach (ext; importCextensions)
+            foreach (i, ext; importCextensions)
             {
                 const file = FileName.combine(path, ext);
                 if (FileName.exists(file) == 1)
                 {
                     import dmd.root.rmem : xarraydup;
+                    recordAbsentCandidates(path, extensions.length + 2 + i);
                     return checkLocal ? file.xarraydup : file;
                 }
                 freePath(file);
             }
+            recordAbsentCandidates(path, size_t.max);
             return null;
         }
 

@@ -297,6 +297,7 @@ struct Param
     Output json;              // Generate JSON file
     unsigned jsonFieldFlags;  // JSON field flags to include
     Output makeDeps;          // Generate make file dependencies
+    Output makeDepsAbsent;    // Generate the absent candidates of makeDeps
     Output mixinOut;          // write expanded mixins for debugging
     Output moduleDeps;        // Generate `.deps` module dependencies
 

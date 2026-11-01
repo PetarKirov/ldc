@@ -9469,6 +9469,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         }
 
         auto resolvedNamez = FileName.searchPath(global.filePath[], namez, false);
+        addAbsentStringImportCandidates(namez, resolvedNamez);
         if (!resolvedNamez)
         {
             error(e.loc, "file `%s` cannot be found or not in a path specified with `-J`", se.toChars());

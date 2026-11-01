@@ -1054,6 +1054,15 @@ else
             printf("%.*s", cast(int) data.length, data.ptr);
     }
 
+    // Output the absent candidates of the makefile dependencies
+    if (params.makeDepsAbsent.doOutput)
+    {
+        OutBuffer buf;
+        writeMakeDepsAbsent(buf, params, driverParams.link, driverParams.lib, target.lib_ext);
+        if (!writeFile(Loc.initial, params.makeDepsAbsent.name, buf[]))
+            fatal();
+    }
+
     if (global.warnings)
         errorOnWarning();
 

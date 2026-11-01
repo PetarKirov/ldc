@@ -77,6 +77,7 @@ extern cl::list<std::string> previews;
 extern cl::list<std::string> reverts;
 extern cl::opt<std::string> moduleDeps;
 extern cl::opt<std::string> makeDeps;
+extern cl::opt<std::string> makeDepsAbsent;
 extern cl::opt<std::string> cacheDir;
 extern cl::list<std::string> linkerSwitches;
 extern cl::list<std::string> ccSwitches;
