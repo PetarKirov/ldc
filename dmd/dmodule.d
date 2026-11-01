@@ -692,6 +692,7 @@ version (IN_LLVM)
         FileName filename = srcfile;
 
         const(ubyte)[] srctext;
+        bool listedAsDependency; // already in the -makedeps files
         if (global.preprocess &&
             (FileName.equalsExt(srcfile.toString(), c_ext) ||
              FileName.equalsExt(srcfile.toString(), h_ext)) &&
@@ -702,6 +703,11 @@ version (IN_LLVM)
              */
 version (IN_LLVM)
 {
+            // list the .c file ahead of the headers the preprocessor adds
+            if (global.params.makeDeps.doOutput)
+                global.params.makeDeps.files.push(srcfile.toChars());
+            listedAsDependency = true;
+
             const ipath = global.preprocess(srcfile, loc, defines);
             srctext = global.fileManager.getFileContents(ipath);
 
@@ -720,7 +726,7 @@ else
 
         if (srctext)
         {
-            if (global.params.makeDeps.doOutput)
+            if (global.params.makeDeps.doOutput && !listedAsDependency)
                 global.params.makeDeps.files.push(srcfile.toChars());
             return true;
         }

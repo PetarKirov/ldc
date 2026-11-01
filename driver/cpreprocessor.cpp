@@ -1,11 +1,14 @@
 #include "driver/cpreprocessor.h"
 
 #include "dmd/errors.h"
+#include "dmd/root/rmem.h"
 #include "dmd/timetrace.h"
 #include "driver/cl_options.h"
 #include "driver/tool.h"
 #include "gen/irstate.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -50,6 +53,63 @@ FileName getOutputPath(Loc loc, const char *csrcfile) {
 
   return FileName::create(buffer.c_str()); // allocates a copy
 }
+
+// Returns the prerequisites of the single make rule in `rule`, as gcc's and
+// clang's `-MD` write it: separated by whitespace and escaped line breaks,
+// with spaces and '#' escaped by a backslash and '$' doubled.
+std::vector<std::string> parseMakeRulePrerequisites(llvm::StringRef rule) {
+  std::vector<std::string> prerequisites;
+  std::string current;
+  const auto flush = [&] {
+    if (!current.empty())
+      prerequisites.push_back(std::move(current));
+    current.clear();
+  };
+
+  // skip the target (set to a plain name with -MT)
+  size_t i = rule.find(':');
+  if (i == llvm::StringRef::npos)
+    return prerequisites;
+
+  for (++i; i < rule.size(); ++i) {
+    const char c = rule[i];
+    const char next = i + 1 < rule.size() ? rule[i + 1] : '\0';
+    if (c == '\\' && (next == ' ' || next == '\t' || next == '#')) {
+      current += next;
+      ++i;
+    } else if (c == '\\' && (next == '\n' || next == '\r')) {
+      flush();
+    } else if (c == '$' && next == '$') {
+      current += '$';
+      ++i;
+    } else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      flush();
+    } else {
+      current += c;
+    }
+  }
+  flush();
+  return prerequisites;
+}
+
+// Adds the headers in the dependency file `depFile` the preprocessor wrote
+// for `csrcfile` to the -makedeps files, each once per compilation.
+void addHeadersToMakeDeps(Loc loc, const char *depFile, const char *csrcfile) {
+  static llvm::StringSet<> listed;
+
+  auto buffer = llvm::MemoryBuffer::getFile(depFile);
+  if (!buffer) {
+    error(loc, "cannot read the C preprocessor's dependency file `%s`: %s",
+          depFile, buffer.getError().message().c_str());
+    fatal();
+  }
+
+  for (const auto &path : parseMakeRulePrerequisites((*buffer)->getBuffer())) {
+    if (path == csrcfile || !listed.insert(path).second)
+      continue;
+    global.params.makeDeps.files.push(mem.xstrdup(path.c_str()));
+  }
+}
 } // anonymous namespace
 
 FileName runCPreprocessor(FileName csrcfile, Loc loc, OutBuffer &defines) {
@@ -67,6 +127,16 @@ FileName runCPreprocessor(FileName csrcfile, Loc loc, OutBuffer &defines) {
 #endif
 
   FileName ipath = getOutputPath(loc, csrcfile.toChars());
+
+  // With -makedeps, the preprocessor lists the headers it read in a make rule
+  // next to the .i file. Not done for MSVC, whose /showIncludes goes to the
+  // console.
+  std::string depFile;
+  if (global.params.makeDeps.doOutput && !isMSVC) {
+    llvm::SmallString<64> buffer(ipath.toChars());
+    llvm::sys::path::replace_extension(buffer, "dep");
+    depFile = buffer.str().str();
+  }
 
   std::vector<std::string> args;
   const std::string &cc = getCC(args);
@@ -154,6 +224,13 @@ FileName runCPreprocessor(FileName csrcfile, Loc loc, OutBuffer &defines) {
     args.push_back("-Wno-builtin-macro-redefined");
 
     args.push_back("-E"); // run preprocessor only
+    if (!depFile.empty()) {
+      args.push_back("-MD");
+      args.push_back("-MF");
+      args.push_back(depFile);
+      args.push_back("-MT");
+      args.push_back("ldc-cpp");
+    }
     args.push_back("-include");
     args.push_back(importc_h);
     args.push_back(csrcfile.toChars());
@@ -165,6 +242,12 @@ FileName runCPreprocessor(FileName csrcfile, Loc loc, OutBuffer &defines) {
   if (status) {
     errorSupplemental(loc, "C preprocessor failed for file '%s'", csrcfile.toChars());
     fatal();
+  }
+
+  if (!depFile.empty()) {
+    addHeadersToMakeDeps(loc, depFile.c_str(), csrcfile.toChars());
+    // Module.read() removes the directory, which must be empty by then
+    llvm::sys::fs::remove(depFile);
   }
 
   return ipath;
