@@ -293,7 +293,7 @@ void addCoverageAnalysis(Module *m) {
     // Set up call to _d_cover_register2
     llvm::Function *fn =
         getRuntimeFunction(Loc(), gIR->module, "_d_cover_register2");
-    LLValue *args[] = {DtoConstString(m->srcfile.toChars()),
+    LLValue *args[] = {DtoConstString(DtoRemapFilePath(m->srcfile.toChars())),
                        d_cover_valid_slice, d_cover_data_slice,
                        DtoConstUbyte(global.params.covPercent)};
     // Check if argument types are correct
