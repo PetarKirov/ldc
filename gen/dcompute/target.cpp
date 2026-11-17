@@ -92,7 +92,13 @@ void DComputeTarget::writeModule(llvm::Module *hostModule) {
 
   if (optLevel() > 0 &&
       (target == ID::Vulkan || target == ID::OpenCL)) {
-    if (auto spirvOpt = llvm::sys::findProgramByName("spirv-opt")) {
+    // `-mdcompute-spirv-opt` names the tool; only without it is it searched
+    // for, so a build that names its tools runs none it did not name.
+    llvm::ErrorOr<std::string> spirvOpt =
+        opts::dcomputeSpirvOpt.getNumOccurrences()
+            ? llvm::ErrorOr<std::string>(opts::dcomputeSpirvOpt.getValue())
+            : llvm::sys::findProgramByName("spirv-opt");
+    if (spirvOpt && !spirvOpt->empty()) {
       std::vector<llvm::StringRef> optArgs;
       optArgs.push_back(*spirvOpt);
       optArgs.push_back("-O");

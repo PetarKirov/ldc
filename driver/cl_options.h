@@ -152,6 +152,7 @@ extern cl::opt<bool, true> fOptimizeNothrow;
 extern cl::list<std::string> dcomputeTargets;
 extern cl::opt<std::string> dcomputeProfile;
 extern cl::opt<std::string> dcomputeManifest;
+extern cl::opt<std::string> dcomputeSpirvOpt;
 extern cl::opt<std::string> dcomputeResources;
 extern cl::opt<bool> dcomputeReportInt64;
 extern cl::opt<std::string> dcomputeFilePrefix;

@@ -843,6 +843,13 @@ cl::opt<bool>
                                  "operation the shader entry points reach"),
                         cl::init(false));
 cl::opt<std::string>
+    dcomputeSpirvOpt("mdcompute-spirv-opt",
+                     cl::desc("The spirv-opt an optimised Vulkan or OpenCL "
+                              "compilation runs over its SPIR-V, by path. "
+                              "Without it, the first spirv-opt on PATH, if "
+                              "any; empty, none"),
+                     cl::value_desc("path"));
+cl::opt<std::string>
     dcomputeManifest("mdcompute-manifest",
                      cl::desc("Write the unit's shader entry points, with "
                               "their stages and profiles, as JSON to <file> "
