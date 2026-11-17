@@ -383,3 +383,99 @@ unittest
     buf.writeEscapedMakePath(input);
     assert(buf[] == expected);
 }
+
+version (IN_LLVM)
+{
+/**
+ * `-makedeps-digests=<file>`: the file to write, or `null`.
+ *
+ * It lists each `-makedeps` dependency once, in the same order, with the
+ * BLAKE3 digest of the bytes the compilation read from it, one per line:
+ * ---
+ * <64 hexadecimal digits>  <path>
+ * ---
+ * A build tool keyed on the dependencies' contents can then key on what the
+ * compiler read, whenever the file changed. A file read through the file
+ * manager is digested from the bytes it parsed; an ImportC source and its
+ * headers, which the C preprocessor reads as a process of its own, as soon
+ * as the preprocessor has finished.
+ */
+extern (C++) __gshared const(char)* makeDepsDigestsFile;
+
+// in driver/main.cpp: BLAKE3 through LLVM's implementation
+extern (C++) void blake3Digest(const(ubyte)* data, size_t length, ubyte* digest) nothrow;
+
+private __gshared StringTable!(ubyte[32]) fileDigests;
+private __gshared bool fileDigestsInitialized;
+
+/**
+ * Record, for `-makedeps-digests`, the bytes read from `path`. The first
+ * record of a path stands.
+ * Params:
+ *   path = the path, as the dependency list spells it
+ *   data = its bytes, as read
+ */
+extern (D) void recordFileDigest(const(char)[] path, const(ubyte)[] data) nothrow
+{
+    if (!makeDepsDigestsFile)
+        return;
+    if (!fileDigestsInitialized)
+    {
+        fileDigests._init();
+        fileDigestsInitialized = true;
+    }
+    if (fileDigests.lookup(path))
+        return;
+    ubyte[32] digest;
+    blake3Digest(data.ptr, data.length, digest.ptr);
+    fileDigests.insert(path, digest);
+}
+
+/// ditto
+extern (C++) void recordFileDigest(const(char)* path, const(ubyte)* data, size_t length) nothrow
+{
+    recordFileDigest(path.toDString, data[0 .. length]);
+}
+
+/**
+ * Output the digests for the -makedeps-digests switch: each -makedeps
+ * dependency once, in order. A dependency no read recorded is read now.
+ * Params:
+ *   buf = outbuffer to write into
+ *   params = dmd params
+ */
+void writeMakeDepsDigests(ref OutBuffer buf, const ref Param params)
+{
+    import dmd.root.file : File;
+
+    static immutable hexDigits = "0123456789abcdef";
+    StringTable!bool written;
+    written._init();
+    foreach (dep; params.makeDeps.files[])
+    {
+        const path = dep.toDString;
+        if (written.insert(path, true) is null)
+            continue;
+        ubyte[32] digest;
+        if (fileDigestsInitialized)
+            if (auto recorded = fileDigests.lookup(path))
+                digest = recorded.value;
+        if (!fileDigestsInitialized || !fileDigests.lookup(path))
+        {
+            OutBuffer contents;
+            if (File.read(path, contents))
+                continue; // gone: a build tool keyed on it sees it absent
+            const bytes = cast(const(ubyte)[]) contents[];
+            blake3Digest(bytes.ptr, bytes.length, digest.ptr);
+        }
+        foreach (b; digest)
+        {
+            buf.writeByte(hexDigits[b >> 4]);
+            buf.writeByte(hexDigits[b & 0xF]);
+        }
+        buf.writestring("  ");
+        buf.writestring(path);
+        buf.writenl();
+    }
+}
+}

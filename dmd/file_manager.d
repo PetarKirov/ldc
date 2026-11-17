@@ -359,6 +359,12 @@ nothrow:
         if (files.insert(name, fb) is null)
             assert(0, "Insert after lookup failure should never return `null`");
 
+        version (IN_LLVM)
+        {
+            import dmd.deps : recordFileDigest;
+            recordFileDigest(name, fb);
+        }
+
         return fb;
     }
 

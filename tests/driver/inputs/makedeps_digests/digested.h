@@ -1,0 +1,1 @@
+#define DIGESTED 1

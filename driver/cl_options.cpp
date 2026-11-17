@@ -499,6 +499,12 @@ cl::opt<std::string> makeDepsAbsent(
              "import, string import and config file searches probed and "
              "found missing"));
 
+cl::opt<std::string> makeDepsDigests(
+    "makedeps-digests", cl::ZeroOrMore, cl::value_desc("filename"),
+    cl::desc("Write each module dependency once to <filename>, with the "
+             "BLAKE3 digest of the bytes the compilation read from it (needs "
+             "-makedeps)"));
+
 cl::opt<bool> m32bits("m32", cl::desc("32 bit target"), cl::ZeroOrMore);
 
 cl::opt<bool> m64bits("m64", cl::desc("64 bit target"), cl::ZeroOrMore);

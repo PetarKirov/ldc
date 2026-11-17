@@ -16,6 +16,9 @@
 
 // In dmd/deps.d
 void addAbsentDep(const char *path);
+extern const char *makeDepsDigestsFile;
+void recordFileDigest(const char *path, const unsigned char *data,
+                      size_t length);
 
 namespace {
 const char *getPathToImportc_h(Loc loc) {
@@ -103,10 +106,26 @@ std::vector<std::string> parseMakeRulePrerequisites(llvm::StringRef rule) {
   return prerequisites;
 }
 
+// With -makedeps-digests, records the bytes `path` holds now, which the
+// preprocessor, a process of its own, has just read.
+void recordDigestOfFile(const std::string &path) {
+  if (!makeDepsDigestsFile)
+    return;
+  auto contents = llvm::MemoryBuffer::getFile(path, /*IsText=*/false,
+                                              /*RequiresNullTerminator=*/false);
+  if (!contents)
+    return; // gone: the digest list leaves it out
+  const auto bytes = (*contents)->getBuffer();
+  recordFileDigest(path.c_str(),
+                   reinterpret_cast<const unsigned char *>(bytes.data()),
+                   bytes.size());
+}
+
 // Adds the headers in the dependency file `depFile` the preprocessor wrote
 // for `csrcfile` to the -makedeps files, each once per compilation.
 void addHeadersToMakeDeps(Loc loc, const char *depFile, const char *csrcfile) {
   static llvm::StringSet<> listed;
+  recordDigestOfFile(csrcfile);
 
   auto buffer = llvm::MemoryBuffer::getFile(depFile);
   if (!buffer) {
@@ -119,6 +138,7 @@ void addHeadersToMakeDeps(Loc loc, const char *depFile, const char *csrcfile) {
     if (path == csrcfile || !listed.insert(path).second)
       continue;
     global.params.makeDeps.files.push(mem.xstrdup(path.c_str()));
+    recordDigestOfFile(path);
   }
 }
 } // anonymous namespace

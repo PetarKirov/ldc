@@ -1063,6 +1063,20 @@ else
             fatal();
     }
 
+    version (IN_LLVM)
+    {
+        // Output the digests of what the makefile dependencies held when read
+        import dmd.deps : makeDepsDigestsFile, writeMakeDepsDigests;
+
+        if (makeDepsDigestsFile)
+        {
+            OutBuffer buf;
+            writeMakeDepsDigests(buf, params);
+            if (!writeFile(Loc.initial, makeDepsDigestsFile.toDString, buf[]))
+                fatal();
+        }
+    }
+
     if (global.warnings)
         errorOnWarning();
 

@@ -59,6 +59,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/LinkAllIR.h"
 #include "llvm/LinkAllPasses.h"
+#include "llvm/Support/BLAKE3.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/Support/ManagedStatic.h"
@@ -88,6 +89,17 @@ void generateJson(Modules *modules);
 
 // In dmd/deps.d
 void addAbsentDep(const char *path);
+extern const char *makeDepsDigestsFile;
+
+// For dmd/deps.d: the BLAKE3 digest of `length` bytes at `data`, into the 32
+// bytes at `digest`.
+void blake3Digest(const unsigned char *data, size_t length,
+                  unsigned char *digest) {
+  llvm::BLAKE3 hasher;
+  hasher.update(llvm::ArrayRef<uint8_t>(data, length));
+  const auto result = hasher.final();
+  memcpy(digest, result.data(), result.size());
+}
 
 using namespace dmd;
 using namespace opts;
@@ -391,6 +403,14 @@ void parseCommandLine(Strings &sourceFiles) {
     global.params.makeDeps.doOutput = true;
     if (!makeDeps.empty())
       global.params.makeDeps.name = opts::dupPathString(makeDeps);
+  }
+
+  if (!makeDepsDigests.empty()) {
+    if (makeDeps.getNumOccurrences() == 0) {
+      error(Loc(), "-makedeps-digests needs -makedeps");
+      fatal();
+    }
+    makeDepsDigestsFile = opts::dupPathString(makeDepsDigests).ptr;
   }
 
   if (!makeDepsAbsent.empty()) {
