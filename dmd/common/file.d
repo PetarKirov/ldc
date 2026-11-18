@@ -19,7 +19,7 @@ import core.stdc.stdlib;
 import core.stdc.string;
 import core.stdc.limits;
 
-import core.stdc.errno : errno;
+import core.stdc.errno : EINTR, errno;
 import core.stdc.stdio : fprintf, remove, rename, stderr;
 import core.stdc.stdlib;
 import core.stdc.string : strerror, strlen, memcpy;
@@ -472,11 +472,21 @@ extern(D) static bool writeFile(const(char)* name, const void[] data) nothrow
         int fd = open(name, O_CREAT | O_WRONLY | O_TRUNC, (6 << 6) | (4 << 3) | 4);
         if (fd == -1)
             return false;
-        if (.write(fd, data.ptr, data.length) != data.length)
+        // One write() call moves at most 0x7ffff000 bytes on Linux, and any
+        // call may move fewer, so write until the data is all out.
+        const(ubyte)[] rest = cast(const(ubyte)[]) data;
+        while (rest.length)
         {
-            close(fd);
-            .remove(name);
-            return false;
+            const written = .write(fd, rest.ptr, rest.length);
+            if (written == -1 && errno == EINTR)
+                continue;
+            if (written <= 0)
+            {
+                close(fd);
+                .remove(name);
+                return false;
+            }
+            rest = rest[written .. $];
         }
         if (close(fd) == -1)
             return false;

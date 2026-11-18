@@ -1032,7 +1032,7 @@ else
         else if (!File.write(fileName, buf[]))
         {
             error(Loc.initial,
-                "Error writing -ftime-trace profile: could not open '%*.s'",
+                "Error writing -ftime-trace profile: could not open '%.*s'",
                 cast(int) fileName.length, fileName.ptr);
         }
 
