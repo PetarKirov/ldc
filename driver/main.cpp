@@ -420,7 +420,10 @@ void parseCommandLine(Strings &sourceFiles) {
       addAbsentDep(path.c_str());
   }
 
-  global.params.timeTraceFile = fTimeTraceFile.c_str();
+  // Unset unless given: the frontend then names the trace after the output
+  // (`<object>.time-trace`), which an empty name would suppress.
+  if (!fTimeTraceFile.empty())
+    global.params.timeTraceFile = fTimeTraceFile.c_str();
 
 #if _WIN32
   for (auto &info : global.params.imppath) {
