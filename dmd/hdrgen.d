@@ -4045,8 +4045,18 @@ private void objectToBuffer(RootObject oarg, ref OutBuffer buf, ref HdrGenState 
     }
     else if (auto e = isExpression(oarg))
     {
-        if (e.op == EXP.variable)
-            e = e.optimize(WANTvalue); // added to fix https://issues.dlang.org/show_bug.cgi?id=7375
+        // Printing must not change compilation. Optimizing a variable expands
+        // its initializer, which fails, recording an error, while that
+        // initializer is itself being evaluated: naming a symbol during that
+        // evaluation (`-ftime-trace` names every instance it times, such as
+        // `anySatisfy!(hasContextPointers, …)` inside `hasContextPointers`'s
+        // own initializer) broke the build. A variable in use prints by name.
+        if (auto ve = e.isVarExp())
+        {
+            auto v = ve.var.isVarDeclaration();
+            if (!v || v.inuse == 0)
+                e = e.optimize(WANTvalue); // added to fix https://issues.dlang.org/show_bug.cgi?id=7375
+        }
         expToBuffer(e, PREC.assign, buf, hgs);
     }
     else if (Dsymbol s = isDsymbol(oarg))
